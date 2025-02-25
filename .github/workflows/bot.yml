@@ -5,26 +5,31 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 * * * *'  # Runs every 1 hours
+    - cron: '0 * * * *'  # Runs every hour on the hour
 
 jobs:
   bot:
     runs-on: ubuntu-latest
+    
+    # Concurrency settings
+    concurrency:
+      group: discord-bot
+      cancel-in-progress: true
 
     steps:
-    - name: Checkout the repository
-      uses: actions/checkout@v2
+      - name: Checkout the repository
+        uses: actions/checkout@v2
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Run Discord bot
-      run: |
-        python bot.py
+      - name: Run Discord bot
+        run: |
+          python bot.py
