@@ -3,9 +3,10 @@ import aiohttp
 import asyncio
 import re
 from discord.ext import commands
+import os
 
 # --- CONFIGURATION ---
-DISCORD_BOT_TOKEN = "MTM0Mzc5NjA1OTYxMjM4NTM0MA.G38bke.dOSLA_ICzRbnaXWTVGH5IoaOAhPyW1ilh5xl1w"  # Replace with your actual token
+DISCORD_BOT_TOKEN =  os.getenv('BOT_TOKEN') # Replace with your actual token
 OPENROUTER_API_KEY = "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"  # Replace with your actual OpenRouter API key
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
