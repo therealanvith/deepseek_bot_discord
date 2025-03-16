@@ -7,7 +7,7 @@ import os
 
 # --- CONFIGURATION ---
 DISCORD_BOT_TOKEN =  os.getenv('BOT_TOKEN') # Replace with your actual token
-OPENROUTER_API_KEY = "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"  # Replace with your actual OpenRouter API key
+OPENROUTER_API_KEY = "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"  # Replace with your actual OpenRouter API key
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Using your model name
