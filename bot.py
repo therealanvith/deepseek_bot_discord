@@ -11,7 +11,7 @@ OPENROUTER_API_KEY = "sk-or-v1-c5401098289c40f0e55af208e2615e6bfb2d8e943e3602e62
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Using your model name
-MODEL = "deepseek/deepseek-r1-zero:free"
+MODEL = "google/gemma-3-4b-it:free"
 
 # --- BOT SETUP ---
 intents = discord.Intents.default()
