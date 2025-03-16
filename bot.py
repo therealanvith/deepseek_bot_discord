@@ -7,8 +7,8 @@ import os
 
 # --- CONFIGURATION ---
 DISCORD_BOT_TOKEN =  os.getenv('BOT_TOKEN') # Replace with your actual token
-OPENROUTER_API_KEY = "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"  # Replace with your actual OpenRouter API key
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_KEY = "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"  # Replace with your actual OpenRouter API key
+API_URL = "https://openrouter.ai/api/v1"
 
 # Using your model name
 MODEL = "deepseek/deepseek-r1-zero:free"
