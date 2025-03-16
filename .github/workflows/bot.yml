@@ -31,5 +31,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Discord bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Pass BOT_TOKEN from GitHub secrets
         run: |
           python bot.py
