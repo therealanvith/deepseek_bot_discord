@@ -81,7 +81,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
     except Exception as e:
         print(f"Error calling AI API: {str(e)}")
-        return "I'm having trouble responding right now. Please try again later.", "N/A"
+        return "I'm having trouble responding right now. Please try again later.", "Seems like issue connecting to API"
 
 # --- BOT EVENT HANDLERS ---
 @bot.event
