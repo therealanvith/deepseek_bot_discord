@@ -109,7 +109,7 @@ async def on_message(message: discord.Message):
         old_bot_text = referenced_msg.content
         new_user_text = message.content
         prompt = (
-            f"Previous bot message:\n{old_ot_text}\n\n"
+            f"Previous bot message:\n{old_bot_text}\n\n"
             f"User's new message:\n{new_user_text}\n\n"
             "Provide your response with 'Reason:' and 'Answer:' sections."
         )
