@@ -42,9 +42,9 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     Returns (answer, reason). If the model doesn't comply, returns (full_response, "N/A").
     """
     system_instructions = (
-        "You are a helpful assistant. Always include two sections in your response:\n"
-        "1) 'Reason:' - your chain-of-thought or explanation.\n"
-        "2) 'Answer:' - your final answer.\n"
+        "Always include two sections in your response:\n"
+        "1) 'Reason:' - your chain-of-thought or your thinking like that of a standard reasoning bot.\n"
+        "2) 'Answer:' - your final answer in proper sentencces like a textbot.\n"
         "Even for simple prompts, please include both sections."
     )
 
