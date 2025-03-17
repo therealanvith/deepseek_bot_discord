@@ -33,5 +33,6 @@ jobs:
       - name: Run Discord bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Pass BOT_TOKEN from GitHub secrets
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
           python bot.py
