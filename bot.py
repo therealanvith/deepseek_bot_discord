@@ -87,14 +87,8 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    # Optional: stop after one hour. Remove these lines for indefinite uptime.
-    bot.loop.create_task(stop_after_one_hour())
+   
 
-async def stop_after_one_hour():
-    """Stops the bot after one hour."""
-    await asyncio.sleep(3600)
-    print("Shutting down the bot after one hour...")
-    await bot.close()
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -115,7 +109,7 @@ async def on_message(message: discord.Message):
         old_bot_text = referenced_msg.content
         new_user_text = message.content
         prompt = (
-            f"Previous bot message:\n{old_bot_text}\n\n"
+            f"Previous bot message:\n{old_ot_text}\n\n"
             f"User's new message:\n{new_user_text}\n\n"
             "Provide your response with 'Reason:' and 'Answer:' sections."
         )
