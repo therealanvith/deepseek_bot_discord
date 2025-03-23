@@ -20,9 +20,9 @@ jobs:
 
       - name: Download Tesseract packages
         run: |
-              sudo apt-get update -y
-              apt download tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng libgif7 libjpeg8 libpng16-16t64 libtiff6 libwebp7 libopenjp2-7
-    
+          sudo apt-get update -y
+          apt download tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng libgif7 libjpeg8 libpng16-16t64 libtiff6 libwebp7 libopenjp2-7
+
       - name: Extract packages
         run: |
           mkdir tesseract-local
@@ -84,9 +84,6 @@ jobs:
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
           TESSDATA_DIR=$(find $GITHUB_WORKSPACE/tesseract-local -type d -name tessdata)
           echo "TESSDATA_PREFIX=$TESSDATA_DIR" >> $GITHUB_ENV
-
-      - name: Verify Tesseract
-        run: tesseract --version
 
       - name: Run Discord bot
         env:
