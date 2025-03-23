@@ -21,7 +21,7 @@ jobs:
       - name: Download Tesseract packages
         run: |
               sudo apt-get update -y
-              apt download tesseract-ocr libtesseract5 libleptonica6 tesseract-ocr-eng libgif7 libjpeg8 libpng16-16 libtiff5 libwebp7 libopenjp2-7
+              apt download tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng libgif7 libjpeg8 libpng16-16t64 libtiff6 libwebp7 libopenjp2-7
     
       - name: Extract packages
         run: |
