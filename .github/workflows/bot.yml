@@ -4,13 +4,11 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 * * * *'  # Runs every hour on the hour
+    - cron: '0 */2 * * *'  # Runs every 2 hours (at 0:00, 2:00, 4:00, etc.)
+    
 jobs:
   bot:
     runs-on: ubuntu-latest
-    concurrency:
-      group: discord-bot
-      cancel-in-progress: true
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v3
@@ -21,19 +19,51 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
       
+      - name: Cache Tesseract
+        id: tesseract-cache
+        uses: actions/cache@v3
+        with:
+          path: /tmp/tesseract-installed
+          key: tesseract-ocr-cache-v1
+      
       - name: Install Tesseract
+        if: steps.tesseract-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+          mkdir -p /tmp/tesseract-installed
+          echo "Tesseract installed" > /tmp/tesseract-installed/marker
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
       
-      - name: Run Discord bot
+      - name: Start new bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
-          python bot.py
+          # Start the bot in the background
+          python bot.py &
+          echo $! > bot.pid
+          
+          # Apply concurrency here programmatically after bot is running
+          echo "Bot started with PID $(cat bot.pid)"
+          
+          # Wait for bot to safely start before canceling any previous workflow
+          sleep 3
+          
+      - name: Apply concurrency
+        run: |
+          # This step doesn't do anything but has concurrency rules that will 
+          # cancel any previous workflow after the new bot has started
+          echo "Applying concurrency rules now"
+        concurrency:
+          group: discord-bot
+          cancel-in-progress: true
+          
+      - name: Keep bot running
+        run: |
+          # Wait for the process to end
+          wait $(cat bot.pid)
