@@ -4,6 +4,9 @@ import asyncio
 import re
 import os
 from discord.ext import commands
+from PIL import Image
+import io
+import pytesseract
 
 # --- CONFIGURATION ---
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')  # Replace with your actual token
@@ -87,6 +90,17 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         print(f"Error calling AI API: {str(e)}")
         return "I'm having trouble responding right now. Please try again later.", "Seems like issue connecting to API"
 
+async def extract_text_from_image(image_url: str) -> str:
+    """Extracts text from an image using OCR."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as response:
+            if response.status == 200:
+                img_data = await response.read()
+                img = Image.open(io.BytesIO(img_data))
+                text = pytesseract.image_to_string(img)
+                return text
+            else:
+                return "Could not retrieve the image."
 
 # --- BOT COMMAND HANDLERS ---
 @bot.command()
@@ -115,7 +129,6 @@ async def ping(ctx):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -207,6 +220,14 @@ async def on_message(message: discord.Message):
             # Send the final answer
             for chunk in chunk_text(answer_message):
                 await message.channel.send(chunk)
+
+    # Check for image attachments and perform OCR if present
+    elif message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type.startswith("image/"):  # Only process images
+                text_from_image = await extract_text_from_image(attachment.url)
+                await message.channel.send(f"Here's the text extracted from the image:\n{text_from_image}")
+                return  # Stop after processing the image
 
     # Allow commands to be processed after handling the message
     await bot.process_commands(message)
