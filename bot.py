@@ -15,10 +15,9 @@ import cv2
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1-zero:free"
+MODEL = "deepseek/deepseek-r1:free"
 
 # Tesseract configuration
-# Set Tesseract path directly to the cached binary location
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_BINARY_PATH
 TESSERACT_CONFIG = '--oem 1 --psm 3 -l eng+osd'
@@ -27,7 +26,6 @@ TESSERACT_CONFIG = '--oem 1 --psm 3 -l eng+osd'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Verify Tesseract path at startup
 if not os.path.exists(TESSERACT_BINARY_PATH):
     logger.error(f"Tesseract binary not found at {TESSERACT_BINARY_PATH}")
 else:
@@ -61,11 +59,12 @@ async def fetch_referenced_message(message: discord.Message):
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
-        "Always include two sections in your response:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step.\n"
-        "2) 'Answer:' - Provide your final answer in clear, proper sentences.\n"
-        "Even for simple prompts or if the OCR text is incomplete, make your best effort to interpret the user's request and provide both sections. "
-        "If you can't solve the problem due to missing information, explain why in the 'Reason:' section and suggest what’s needed in the 'Answer:' section."
+        "Your response must always be structured with exactly two sections:\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Use LaTeX for mathematical expressions (e.g., $x_1$, $\\frac{5}{k}$), but ensure all LaTeX is properly closed.\n"
+        "2) 'Answer:' - Provide your final answer in clear, proper sentences. Use LaTeX for mathematical expressions if needed.\n"
+        "Do not use parentheses around 'Reasoning' or other variations—use 'Reason:' and 'Answer:' exactly as specified. "
+        "Even if the OCR text is incomplete or an error message, provide both sections, explaining the issue in 'Reason:' and suggesting a solution in 'Answer:'. "
+        "Ensure all brackets and LaTeX expressions are properly closed to avoid formatting errors."
     )
 
     headers = {
@@ -88,14 +87,27 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 content = response_json["choices"][0]["message"]["content"]
                 logger.info(f"AI API response: {content}")
 
+                # Clean up stray brackets and ensure proper formatting
+                content = content.replace("}", "").replace("{", "")  # Remove stray LaTeX brackets
+                content = re.sub(r'\s+', ' ', content).strip()  # Normalize whitespace
+
+                # Try to parse Reason: and Answer: sections
                 if "Reason:" in content and "Answer:" in content:
                     reason_part = content.split("Answer:")[0].split("Reason:")[-1].strip()
                     answer_part = content.split("Answer:")[-1].strip()
                 else:
-                    return content.strip(), "N/A"
+                    # Fallback: if the AI doesn't follow the format, split on the last "So," (common in reasoning)
+                    if "So," in content:
+                        parts = content.rsplit("So,", 1)
+                        reason_part = parts[0].strip()
+                        answer_part = "So, " + parts[1].strip()
+                    else:
+                        reason_part = content
+                        answer_part = "I couldn't determine a clear answer due to formatting issues."
 
-                reason_part = re.sub(r'\n\s*\n+', '\n', reason_part).replace("**", "").strip()
-                answer_part = re.sub(r'\n\s*\n+', '\n', answer_part).replace("**", "").strip()
+                # Preserve LaTeX by not stripping math-related characters
+                reason_part = re.sub(r'\n\s*\n+', '\n', reason_part).strip()
+                answer_part = re.sub(r'\n\s*\n+', '\n', answer_part).strip()
                 return answer_part, reason_part
 
     except Exception as e:
@@ -225,6 +237,9 @@ async def on_message(message: discord.Message):
             
             async with message.channel.typing():
                 answer, reason = await get_ai_response(prompt)
+                # Wrap LaTeX in $ for Discord rendering
+                reason = re.sub(r'(\$.*?\$)', r'\1', reason)  # Ensure existing $...$ is preserved
+                answer = re.sub(r'(\$.*?\$)', r'\1', answer)
                 reasoning_message = f"(Reasoning: {reason})"
                 answer_message = answer
                 
