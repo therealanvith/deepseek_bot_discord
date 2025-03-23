@@ -103,6 +103,7 @@ async def extract_text_from_image(image_url: str) -> str:
                 return "Could not retrieve the image."
 
 # --- BOT COMMAND HANDLERS ---
+
 @bot.command()
 async def activate(ctx):
     """Activates the bot to respond to all messages in the current channel."""
@@ -226,8 +227,27 @@ async def on_message(message: discord.Message):
         for attachment in message.attachments:
             if attachment.content_type.startswith("image/"):  # Only process images
                 text_from_image = await extract_text_from_image(attachment.url)
-                await message.channel.send(f"Here's the text extracted from the image:\n{text_from_image}")
-                return  # Stop after processing the image
+
+                # Now include this extracted text in the prompt with context about it being from an image
+                prompt = f"Here is some text extracted from an image:\n{text_from_image}\nPlease respond with 'Reason:' and 'Answer:' sections based on the extracted text."
+
+                async with message.channel.typing():
+                    answer, reason = await get_ai_response(prompt)
+                    reasoning_message = f"(Reasoning: {reason})"
+                    answer_message = answer
+
+                    # Send reasoning first
+                    reasoning_chunks = chunk_text(reasoning_message)
+                    if reasoning_chunks:
+                        await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+                        for chunk in reasoning_chunks[1:]:
+                            await message.channel.send(chunk)
+
+                    # Send the final answer
+                    for chunk in chunk_text(answer_message):
+                        await message.channel.send(chunk)
+
+                return  # Stop after processing the image and sending the response
 
     # Allow commands to be processed after handling the message
     await bot.process_commands(message)
