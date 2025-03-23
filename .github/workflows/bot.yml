@@ -18,22 +18,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Tesseract and cache it
-        id: cache-tesseract
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
-          mkdir -p tesseract-cache/bin
-          mkdir -p tesseract-cache/share/tessdata
-          cp /usr/bin/tesseract tesseract-cache/bin/
-          cp -r /usr/share/tesseract-ocr/5/tessdata/* tesseract-cache/share/tessdata/
-
-      - name: Cache Tesseract files
-        uses: actions/cache@v3
-        with:
-          path: tesseract-cache
-          key: ${{ runner.os }}-tesseract-${{ hashFiles('tesseract-cache/bin/tesseract') }}
-
       - name: Cache virtual environment
         id: cache-venv
         uses: actions/cache@v3
@@ -64,24 +48,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Restore Tesseract cache
-        uses: actions/cache/restore@v3
-        with:
-          path: tesseract-cache
-          key: ${{ runner.os }}-tesseract-${{ hashFiles('tesseract-cache/bin/tesseract') }}
-
       - name: Restore virtual environment cache
         uses: actions/cache/restore@v3
         with:
           path: .venv
           key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
 
-      - name: Set up Tesseract from cache
+      - name: Install Tesseract
         run: |
-          sudo cp tesseract-cache/bin/tesseract /usr/bin/
-          sudo mkdir -p /usr/share/tesseract-ocr/5/tessdata
-          sudo cp -r tesseract-cache/share/tessdata/* /usr/share/tesseract-ocr/5/tessdata/
-          tesseract --version  # Verify Tesseract is working
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
 
       - name: Run Discord bot
         env:
