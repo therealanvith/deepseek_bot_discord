@@ -92,15 +92,26 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
 async def extract_text_from_image(image_url: str) -> str:
     """Extracts text from an image using OCR."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(image_url) as response:
-            if response.status == 200:
-                img_data = await response.read()
-                img = Image.open(io.BytesIO(img_data))
-                text = pytesseract.image_to_string(img)
-                return text
-            else:
-                return "Could not retrieve the image."
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as response:
+                if response.status == 200:
+                    img_data = await response.read()
+                    img = Image.open(io.BytesIO(img_data))
+                    text = pytesseract.image_to_string(img)
+                    return text if text.strip() else "No text detected in the image."
+                else:
+                    return "Could not retrieve the image."
+    except Exception as e:
+        print(f"OCR error: {str(e)}")
+        return f"Error processing image: {str(e)}"
+
+async def get_conversation_context(channel, limit=MAX_CONTEXT_MESSAGES):
+    """Fetch conversation context from channel history"""
+    full_context = ""
+    async for msg in channel.history(limit=limit):
+        full_context = f"{msg.author.name}: {msg.content}\n" + full_context
+    return full_context
 
 # --- BOT COMMAND HANDLERS ---
 
@@ -139,118 +150,67 @@ async def on_message(message: discord.Message):
     - Responds to mentions of the bot (@bot), even when not activated.
     - Responds to replies to its own messages.
     - Responds to all messages in activated channels.
+    - Processes images with OCR when present.
     """
     if message.author == bot.user or message.author.bot:
         return  # Ignore bot's own messages and other bots' messages
-
-    # Respond to mentions (@bot), even when not activated
-    if bot.user.mentioned_in(message):
-        prompt = message.content
-
-        # Fetch the last MAX_CONTEXT_MESSAGES from the channel's message history
-        full_context = ""
-        async for msg in message.channel.history(limit=MAX_CONTEXT_MESSAGES):
-            full_context = f"{msg.author.name}: {msg.content}\n" + full_context
-
-        # Combine the context and the current message to create a prompt
-        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
-
-        # Process the AI response
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            reasoning_message = f"(Reasoning: {reason})"
-            answer_message = answer
-
-            # Send reasoning first
-            reasoning_chunks = chunk_text(reasoning_message)
-            if reasoning_chunks:
-                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-                for chunk in reasoning_chunks[1:]:
-                    await message.channel.send(chunk)
-
-            # Send the final answer
-            for chunk in chunk_text(answer_message):
-                await message.channel.send(chunk)
-
-    # Handle replies to the bot's own message
-    elif message.reference and message.reference.resolved.author == bot.user:
-        referenced_msg = message.reference.resolved
-        prompt = f"Previous bot message:\n{referenced_msg.content}\n\nUser's new message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
-
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            reasoning_message = f"(Reasoning: {reason})"
-            answer_message = answer
-
-            # Send reasoning first
-            reasoning_chunks = chunk_text(reasoning_message)
-            if reasoning_chunks:
-                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-                for chunk in reasoning_chunks[1:]:
-                    await message.channel.send(chunk)
-
-            # Send the final answer
-            for chunk in chunk_text(answer_message):
-                await message.channel.send(chunk)
-
-    # Handle activated channels (respond to all messages)
-    elif message.channel.id in activated_channels:
-        prompt = message.content
-
-        # Fetch the last MAX_CONTEXT_MESSAGES from the channel's message history
-        full_context = ""
-        async for msg in message.channel.history(limit=MAX_CONTEXT_MESSAGES):
-            full_context = f"{msg.author.name}: {msg.content}\n" + full_context
-
-        # Combine the context and the current message to create a prompt
-        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
-
-        # Process the AI response
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            reasoning_message = f"(Reasoning: {reason})"
-            answer_message = answer
-
-            # Send reasoning first
-            reasoning_chunks = chunk_text(reasoning_message)
-            if reasoning_chunks:
-                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-                for chunk in reasoning_chunks[1:]:
-                    await message.channel.send(chunk)
-
-            # Send the final answer
-            for chunk in chunk_text(answer_message):
-                await message.channel.send(chunk)
-
-    # Check for image attachments and perform OCR if present
-    elif message.attachments:
-        for attachment in message.attachments:
-            if attachment.content_type.startswith("image/"):  # Only process images
-                text_from_image = await extract_text_from_image(attachment.url)
-
-                # Construct the prompt indicating that OCR has been done on the image
-                prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\n.Text from the image has been extracted from an image using OCR. When the user asks for extracted text just say this:\n\n{text_from_image}\n\n or you can use this text from ocr to do asked calculations. we all know you cant analyze images on your own so we have set up a seperate api for ocr and the result is provided above use itscontext to get a message to be complete for this discord bot. whenever user asks abt image just use this {text_from_image}\n\nPlease analyze the following text and respond with 'Reason:' and 'Answer:' sections."
-
-                async with message.channel.typing():
-                    answer, reason = await get_ai_response(prompt)
-                    reasoning_message = f"(Reasoning: {reason})"
-                    answer_message = answer
-
-                    # Send reasoning first
-                    reasoning_chunks = chunk_text(reasoning_message)
-                    if reasoning_chunks:
-                        await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-                        for chunk in reasoning_chunks[1:]:
-                            await message.channel.send(chunk)
-
-                    # Send the final answer
-                    for chunk in chunk_text(answer_message):
-                        await message.channel.send(chunk)
-
-                return  # Stop after processing the image and sending the response
-
-    # Allow commands to be processed after handling the message
+    
+    # Allow commands to be processed
     await bot.process_commands(message)
+    
+    # Check if we need to respond to this message
+    should_respond = (
+        bot.user.mentioned_in(message) or  # Mentioned
+        (message.reference and message.reference.resolved and message.reference.resolved.author == bot.user) or  # Reply to bot
+        message.channel.id in activated_channels  # Activated channel
+    )
+    
+    # Check for image attachments and perform OCR if present
+    ocr_text = ""
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                # Only process images
+                ocr_text += await extract_text_from_image(attachment.url)
+                should_respond = True  # Always respond to images
+    
+    if not should_respond:
+        return
+    
+    # Get conversation context
+    full_context = await get_conversation_context(message.channel)
+    
+    # Prepare prompt based on the situation
+    if message.reference and message.reference.resolved and message.reference.resolved.author == bot.user:
+        # Reply to bot
+        referenced_msg = message.reference.resolved
+        prompt = f"Previous bot message:\n{referenced_msg.content}\n\nUser's new message:\n{message.content}"
+    else:
+        # Normal message
+        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}"
+    
+    # Add OCR text if available
+    if ocr_text:
+        prompt += f"\n\nOCR text extracted from user's image:\n{ocr_text}\n\nPlease use this text for your response. The user wants you to analyze this text from the image."
+    
+    prompt += "\nPlease respond with 'Reason:' and 'Answer:' sections."
+    
+    # Process the AI response
+    async with message.channel.typing():
+        answer, reason = await get_ai_response(prompt)
+        reasoning_message = f"(Reasoning: {reason})"
+        answer_message = answer
+
+        # Send reasoning first
+        reasoning_chunks = chunk_text(reasoning_message)
+        if reasoning_chunks:
+            await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+            for chunk in reasoning_chunks[1:]:
+                await message.channel.send(chunk)
+
+        # Send the final answer
+        for chunk in chunk_text(answer_message):
+            await message.channel.send(chunk)
 
 # --- RUN THE BOT ---
 bot.run(DISCORD_BOT_TOKEN)
