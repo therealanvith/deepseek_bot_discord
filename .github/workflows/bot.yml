@@ -18,12 +18,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Download Tesseract packages
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng \
-            libgif7 libjpeg8 libpng16-16 libtiff6 libwebp7 libopenjp2-7 zlib1g libarchive13t64 libcurl4t64
+          apt download tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng libgif7 libjpeg8 libpng16-16t64 libtiff6 libwebp7 libopenjp2-7 zlib1g libarchive13t64 libcurl4t64 libsharpyuv0
+
+      - name: Extract packages
+        run: |
+          mkdir tesseract-local
+          for deb in *.deb; do
+            dpkg-deb -x $deb tesseract-local
+          done
 
       - name: Cache Tesseract local installation
         uses: actions/cache@v3
@@ -31,10 +36,20 @@ jobs:
           path: tesseract-local
           key: ${{ runner.os }}-tesseract-v1
 
-      - name: Install dependencies from requirements.txt
+      - name: Cache virtual environment
+        id: cache-venv
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
+      - name: Set up virtual environment if cache miss
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
   bot:
     needs: setup
@@ -62,6 +77,10 @@ jobs:
         with:
           path: .venv
           key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
+      - name: Check cached libraries
+        run: |
+          ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/lib*
 
       - name: Set environment variables for Tesseract
         run: |
