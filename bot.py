@@ -2,12 +2,15 @@ import discord
 import aiohttp
 import asyncio
 import re
-from discord.ext import commands
 import os
+from discord.ext import commands
+from PIL import Image
+import pytesseract
+from io import BytesIO
 
 # --- CONFIGURATION ---
-DISCORD_BOT_TOKEN =  os.getenv('BOT_TOKEN') # Replace with your actual token
-OPENROUTER_API_KEY = os.getenv('API_KEY') # Replace with your actual OpenRouter API key
+DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')  # Replace with your actual token
+OPENROUTER_API_KEY = os.getenv('API_KEY')  # Replace with your actual OpenRouter API key
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Using your model name
@@ -17,6 +20,9 @@ MODEL = "deepseek/deepseek-r1:free"
 intents = discord.Intents.default()
 intents.message_content = True  # Enable "Message Content Intent" in Developer Portal
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --- GLOBAL VARIABLES --- (you can store them in a database if needed)
+message_context = {}  # A dictionary to store conversation context per channel
 
 # --- HELPER FUNCTIONS ---
 def chunk_text(text: str, max_length: int = 2000):
@@ -35,6 +41,15 @@ async def fetch_referenced_message(message: discord.Message):
     except Exception:
         return None
 
+async def process_image(image_url: str):
+    """Uses OCR to extract text from an image URL."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as resp:
+            img_data = await resp.read()
+            img = Image.open(BytesIO(img_data))
+            text = pytesseract.image_to_string(img)
+            return text.strip()
+
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """
     Calls the AI model via OpenRouter's API.
@@ -44,7 +59,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "Always include two sections in your response:\n"
         "1) 'Reason:' - your chain-of-thought or your thinking like that of a standard reasoning bot.\n"
-        "2) 'Answer:' - your final answer in proper sentencces like a textbot.\n"
+        "2) 'Answer:' - your final answer in proper sentences like a textbot.\n"
         "Even for simple prompts, please include both sections."
     )
 
@@ -83,11 +98,11 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         print(f"Error calling AI API: {str(e)}")
         return "I'm having trouble responding right now. Please try again later.", "Seems like issue connecting to API"
 
+
 # --- BOT EVENT HANDLERS ---
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-   
 
 
 @bot.event
@@ -95,64 +110,64 @@ async def on_message(message: discord.Message):
     """
     Processes incoming messages:
     - If replying to the bot or mentioning the bot, builds a prompt.
-    - Retrieves the AI response with a 'Reason:' and 'Answer:'.
+    - Retrieves the AI response with 'Reason:' and 'Answer:'.
     - Sends only the first message as a reply; all subsequent messages are sent normally.
     """
     if message.author == bot.user:
         return
 
-    prompt = ""
-    referenced_msg = await fetch_referenced_message(message)
-
-    if referenced_msg and referenced_msg.author == bot.user:
-        # Condition 1: User replied to the bot's message
-        old_bot_text = referenced_msg.content
-        new_user_text = message.content
-        prompt = (
-            f"Previous bot message:\n{old_bot_text}\n\n"
-            f"User's new message:\n{new_user_text}\n\n"
-            "Provide your response with 'Reason:' and 'Answer:' sections."
-        )
-    elif referenced_msg and (bot.user in message.mentions):
-        # Condition 2: User replied to another message but mentioned the bot
-        referenced_text = referenced_msg.content
-        user_text = message.content.replace(bot.user.mention, "").strip()
-        prompt = (
-            f"The user is replying to this message:\n{referenced_text}\n\n"
-            f"Now, the user is asking:\n{user_text}\n\n"
-            "Provide your response with 'Reason:' and 'Answer:' sections."
-        )
-    elif bot.user in message.mentions:
-        # Condition 3: Direct mention (no reply)
-        user_text = message.content.replace(bot.user.mention, "").strip()
-        prompt = (
-            f"{user_text}\nProvide your response with 'Reason:' and 'Answer:' sections."
-        )
+    # --- Handling Image OCR ---
+    if message.attachments:
+        # Look for image attachments
+        for attachment in message.attachments:
+            if attachment.content_type.startswith("image"):
+                image_text = await process_image(attachment.url)
+                prompt = f"User sent an image with text: {image_text}\nPlease respond with 'Reason:' and 'Answer:' sections."
+                break
+        else:
+            # If no images are present, continue as normal
+            prompt = message.content
     else:
-        await bot.process_commands(message)
-        return
+        # Handle non-image messages
+        prompt = message.content
 
-    if prompt:
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            # Format the reasoning with a "Reasoning:" label inside parentheses
-            reasoning_message = f"(Reasoning: {reason})"
-            answer_message = answer
+    # --- Keep track of conversation context ---
+    if message.channel.id not in message_context:
+        message_context[message.channel.id] = []
 
-            # Combine all chunks and only use reply reference for the very first message.
-            # Send reasoning messages first.
-            reasoning_chunks = chunk_text(reasoning_message)
-            if reasoning_chunks:
-                # Send the first chunk as a reply.
-                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-                for chunk in reasoning_chunks[1:]:
-                    await message.channel.send(chunk)
+    message_context[message.channel.id].append({"author": message.author.name, "content": message.content})
 
-            # Send the answer messages (none of these are replies).
-            for chunk in chunk_text(answer_message):
+    # If there's a lot of context, you may want to trim older messages
+    # This is optional based on how much context you want to provide to the AI
+    if len(message_context[message.channel.id]) > 20:  # Limit to 20 messages
+        message_context[message.channel.id].pop(0)
+
+    # Combine the context and the current message to create a prompt
+    full_context = "\n".join([f"{msg['author']}: {msg['content']}" for msg in message_context[message.channel.id]])
+
+    prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
+
+    # --- Process AI Response ---
+    async with message.channel.typing():
+        answer, reason = await get_ai_response(prompt)
+        # Format the reasoning with a "Reasoning: " label
+        reasoning_message = f"(Reasoning: {reason})"
+        answer_message = answer
+
+        # Send reasoning first
+        reasoning_chunks = chunk_text(reasoning_message)
+        if reasoning_chunks:
+            await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+            for chunk in reasoning_chunks[1:]:
                 await message.channel.send(chunk)
 
+        # Send answer
+        for chunk in chunk_text(answer_message):
+            await message.channel.send(chunk)
+
+    # Allow commands to be processed after handling the message
     await bot.process_commands(message)
+
 
 # --- RUN THE BOT ---
 bot.run(DISCORD_BOT_TOKEN)
