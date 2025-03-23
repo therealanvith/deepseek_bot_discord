@@ -4,9 +4,6 @@ import asyncio
 import re
 import os
 from discord.ext import commands
-from PIL import Image
-import pytesseract
-from io import BytesIO
 
 # --- CONFIGURATION ---
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')  # Replace with your actual token
@@ -28,16 +25,19 @@ MAX_CONTEXT_MESSAGES = 20  # Max number of messages to fetch from the past
 # --- HELPER FUNCTIONS ---
 def chunk_text(text: str, max_length: int = 2000):
     """Splits text into chunks of up to max_length characters."""
-    return [text[i : i + max_length] for i in range(0, len(text), max_length)]
+    return [text[i: i + max_length] for i in range(0, len(text), max_length)]
 
-async def process_image(image_url: str):
-    """Uses OCR to extract text from an image URL."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(image_url) as resp:
-            img_data = await resp.read()
-            img = Image.open(BytesIO(img_data))
-            text = pytesseract.image_to_string(img)
-            return text.strip()
+async def fetch_referenced_message(message: discord.Message):
+    """Safely fetch the message that the user is replying to."""
+    if not message.reference:
+        return None
+    ref = message.reference.resolved
+    if ref:
+        return ref
+    try:
+        return await message.channel.fetch_message(message.reference.message_id)
+    except Exception:
+        return None
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """
@@ -89,7 +89,6 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
 
 # --- BOT COMMAND HANDLERS ---
-
 @bot.command()
 async def activate(ctx):
     """Activates the bot to respond to all messages in the current channel."""
@@ -101,9 +100,15 @@ async def deactivate(ctx):
     """Deactivates the bot from responding to all messages in the current channel."""
     if ctx.channel.id in activated_channels:
         del activated_channels[ctx.channel.id]
-        await ctx.send(f"The bot is now deactivated and will only respond to mentions in this channel.")
+        await ctx.send(f"The bot is now deactivated and will only respond to mentions and replies in this channel.")
     else:
         await ctx.send(f"The bot is not activated in this channel.")
+
+@bot.command()
+async def ping(ctx):
+    """Test command to check if the bot is responding."""
+    await ctx.send('Pong!')
+
 
 # --- BOT EVENT HANDLERS ---
 
@@ -111,19 +116,21 @@ async def deactivate(ctx):
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
+
 @bot.event
 async def on_message(message: discord.Message):
     """
-    Processes incoming messages:
-    - If replying to the bot or mentioning the bot, builds a prompt.
-    - Retrieves the AI response with 'Reason:' and 'Answer:'.
-    - If the bot is activated, responds to all messages.
+    Handles all messages:
+    - Ignores messages from other bots.
+    - Responds to mentions of the bot (@bot), even when not activated.
+    - Responds to replies to its own messages.
+    - Responds to all messages in activated channels.
     """
-    if message.author == bot.user:
-        return
+    if message.author == bot.user or message.author.bot:
+        return  # Ignore bot's own messages and other bots' messages
 
-    # If the bot is activated for the channel, respond to all messages
-    if message.channel.id in activated_channels:
+    # Respond to mentions (@bot), even when not activated
+    if bot.user.mentioned_in(message):
         prompt = message.content
 
         # Fetch the last MAX_CONTEXT_MESSAGES from the channel's message history
@@ -134,10 +141,9 @@ async def on_message(message: discord.Message):
         # Combine the context and the current message to create a prompt
         prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
 
-        # --- Process AI Response ---
+        # Process the AI response
         async with message.channel.typing():
             answer, reason = await get_ai_response(prompt)
-            # Format the reasoning with a "Reasoning: " label
             reasoning_message = f"(Reasoning: {reason})"
             answer_message = answer
 
@@ -148,7 +154,57 @@ async def on_message(message: discord.Message):
                 for chunk in reasoning_chunks[1:]:
                     await message.channel.send(chunk)
 
-            # Send answer
+            # Send the final answer
+            for chunk in chunk_text(answer_message):
+                await message.channel.send(chunk)
+
+    # Handle replies to the bot's own message
+    elif message.reference and message.reference.resolved.author == bot.user:
+        referenced_msg = message.reference.resolved
+        prompt = f"Previous bot message:\n{referenced_msg.content}\n\nUser's new message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
+
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            reasoning_message = f"(Reasoning: {reason})"
+            answer_message = answer
+
+            # Send reasoning first
+            reasoning_chunks = chunk_text(reasoning_message)
+            if reasoning_chunks:
+                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+                for chunk in reasoning_chunks[1:]:
+                    await message.channel.send(chunk)
+
+            # Send the final answer
+            for chunk in chunk_text(answer_message):
+                await message.channel.send(chunk)
+
+    # Handle activated channels (respond to all messages)
+    elif message.channel.id in activated_channels:
+        prompt = message.content
+
+        # Fetch the last MAX_CONTEXT_MESSAGES from the channel's message history
+        full_context = ""
+        async for msg in message.channel.history(limit=MAX_CONTEXT_MESSAGES):
+            full_context = f"{msg.author.name}: {msg.content}\n" + full_context
+
+        # Combine the context and the current message to create a prompt
+        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
+
+        # Process the AI response
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            reasoning_message = f"(Reasoning: {reason})"
+            answer_message = answer
+
+            # Send reasoning first
+            reasoning_chunks = chunk_text(reasoning_message)
+            if reasoning_chunks:
+                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+                for chunk in reasoning_chunks[1:]:
+                    await message.channel.send(chunk)
+
+            # Send the final answer
             for chunk in chunk_text(answer_message):
                 await message.channel.send(chunk)
 
