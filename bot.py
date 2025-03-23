@@ -15,7 +15,7 @@ import cv2
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1:free"
+MODEL = "deepseek/deepseek-r1-zero:free"  # Update this if you've changed the model
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -60,11 +60,13 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
         "Your response must always be structured with exactly two sections:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Use LaTeX for mathematical expressions (e.g., $x_1$, $\\frac{5}{k}$), but ensure all LaTeX is properly closed.\n"
-        "2) 'Answer:' - Provide your final answer in clear, proper sentences. Use LaTeX for mathematical expressions if needed.\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, $\\frac{5}{k}$). Instead, use plain text for variables (e.g., x_1, 5/k) and wrap mathematical equations in Discord code blocks (```) for clarity. For example, write '5 = k * x_1' inside a code block like this:\n"
+        "```\n5 = k * x_1\n```\n"
+        "2) 'Answer:' - Provide your final answer in clear, proper sentences. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed.\n"
         "Do not use parentheses around 'Reasoning' or other variations—use 'Reason:' and 'Answer:' exactly as specified. "
+        "Do not use bold markers (**) or any other Markdown formatting except for code blocks (```). "
         "Even if the OCR text is incomplete or an error message, provide both sections, explaining the issue in 'Reason:' and suggesting a solution in 'Answer:'. "
-        "Ensure all brackets and LaTeX expressions are properly closed to avoid formatting errors."
+        "Ensure all brackets are properly closed to avoid formatting errors."
     )
 
     headers = {
@@ -87,16 +89,23 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 content = response_json["choices"][0]["message"]["content"]
                 logger.info(f"AI API response: {content}")
 
-                # Clean up stray brackets and ensure proper formatting
-                content = content.replace("}", "").replace("{", "")  # Remove stray LaTeX brackets
-                content = re.sub(r'\s+', ' ', content).strip()  # Normalize whitespace
+                # Clean up the AI response
+                # Remove all bold markers
+                content = content.replace("**", "")
+                # Remove stray brackets (curly, square, and parentheses if unmatched)
+                content = re.sub(r'\{[^}]*\}', lambda m: m.group(0).replace('{', '').replace('}', ''), content)
+                content = content.replace("{", "").replace("}", "")
+                content = re.sub(r'$$   [^   $$]*\]', lambda m: m.group(0).replace('[', '').replace(']', ''), content)
+                content = content.replace("[", "").replace("]", "")
+                # Normalize whitespace
+                content = re.sub(r'\s+', ' ', content).strip()
 
                 # Try to parse Reason: and Answer: sections
                 if "Reason:" in content and "Answer:" in content:
                     reason_part = content.split("Answer:")[0].split("Reason:")[-1].strip()
                     answer_part = content.split("Answer:")[-1].strip()
                 else:
-                    # Fallback: if the AI doesn't follow the format, split on the last "So," (common in reasoning)
+                    # Fallback: split on the last "So," if present
                     if "So," in content:
                         parts = content.rsplit("So,", 1)
                         reason_part = parts[0].strip()
@@ -105,9 +114,12 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                         reason_part = content
                         answer_part = "I couldn't determine a clear answer due to formatting issues."
 
-                # Preserve LaTeX by not stripping math-related characters
+                # Final cleanup: ensure no bold markers, stray brackets, or LaTeX remain
+                reason_part = reason_part.replace("**", "").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("$", "")
+                answer_part = answer_part.replace("**", "").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("$", "")
                 reason_part = re.sub(r'\n\s*\n+', '\n', reason_part).strip()
                 answer_part = re.sub(r'\n\s*\n+', '\n', answer_part).strip()
+
                 return answer_part, reason_part
 
     except Exception as e:
@@ -237,9 +249,9 @@ async def on_message(message: discord.Message):
             
             async with message.channel.typing():
                 answer, reason = await get_ai_response(prompt)
-                # Wrap LaTeX in $ for Discord rendering
-                reason = re.sub(r'(\$.*?\$)', r'\1', reason)  # Ensure existing $...$ is preserved
-                answer = re.sub(r'(\$.*?\$)', r'\1', answer)
+                # Ensure no bold markers or LaTeX in final output
+                reason = reason.replace("**", "").replace("$", "")
+                answer = answer.replace("**", "").replace("$", "")
                 reasoning_message = f"(Reasoning: {reason})"
                 answer_message = answer
                 
