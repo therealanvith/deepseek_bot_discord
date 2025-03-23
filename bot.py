@@ -56,11 +56,46 @@ async def fetch_referenced_message(message: discord.Message):
         logger.error(f"Error fetching referenced message: {e}")
         return None
 
+def reformat_equation(text: str) -> str:
+    # Replace LaTeX fractions with plain text (e.g., \frac{7}{5}x_1 -> (7/5) * x_1)
+    text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'(\1/\2)', text)
+    # Replace LaTeX arrows with plain text
+    text = text.replace("\\Rightarrow", "=>")
+    # Replace LaTeX times with *
+    text = text.replace("\\times", "*")
+    # Replace LaTeX text commands
+    text = text.replace("\\text", "")
+    # Replace LaTeX parentheses
+    text = text.replace("\\left", "").replace("\\right", "")
+    # Remove any remaining LaTeX backslashes
+    text = text.replace("\\", "")
+    # Add spaces around operators for readability
+    text = re.sub(r'(\d|\w)([+\-*/=])', r'\1 \2', text)
+    text = re.sub(r'([+\-*/=])(\d|\w)', r'\1 \2', text)
+    return text
+
+def wrap_equations_in_code_blocks(text: str) -> str:
+    # Find equations (e.g., anything with =, =>, or mathematical operators)
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        # Check if the line contains an equation (look for =, =>, or operators)
+        if re.search(r'[=+\-*/]|=>', line) and not line.strip().startswith('```'):
+            # Remove any existing LaTeX markers
+            line = line.replace('$$  ', '').replace('$', '').strip()
+            # Reformat the equation
+            line = reformat_equation(line)
+            # Wrap in code block
+            result.append(f"```\n{line}\n```")
+        else:
+            result.append(line)
+    return '\n'.join(result)
+
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. Your response will be sent directly to a Discord channel, so you must format it specifically for Discord's rendering. "
         "Your response must always be structured with exactly two sections:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, \\frac{5}{k}, \\text, \\Rightarrow, \\left, \\right). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies, ( ) for parentheses). All mathematical equations must be wrapped in Discord code blocks (```) for clarity, with proper spacing for readability. For example, write '5 = k * x_1' inside a code block like this:\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$,   $$...$$  , \\frac{5}{k}, \\text, \\Rightarrow, \\left, \\right). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies, ( ) for parentheses). All mathematical equations must be written in plain text and wrapped in Discord code blocks (```) for clarity, with proper spacing for readability. For example, write '5 = k * x_1' inside a code block like this:\n"
         "```\n5 = k * x_1\n```\n"
         "For complex expressions, add spaces around operators (e.g., '5 * x_1 - 2 * (7/5) * x_1' instead of '5x_1-2*(7/5)x_1'). Do not use quotation marks around equations.\n"
         "2) 'Answer:' - Provide your final answer in a single, concise sentence. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed. For example, 'Answer: The tension is 11 N, so the answer is C.'\n"
@@ -94,8 +129,8 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 # Clean up the AI response
                 # Remove all bold markers
                 content = content.replace("**", "")
-                # Remove LaTeX symbols
-                content = content.replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\left", "(").replace("\\right", ")").replace("\\", "")
+                # Remove LaTeX markers
+                content = content.replace("  $$", "").replace("$", "").replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\left", "(").replace("\\right", ")").replace("\\", "")
                 # Remove stray brackets
                 content = re.sub(r'\{[^}]*\}', lambda m: m.group(0).replace('{', '').replace('}', ''), content)
                 content = content.replace("{", "").replace("}", "")
@@ -108,6 +143,9 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 content = re.sub(r'"([^"]*=[^"]*)"', r'\1', content)
                 # Normalize whitespace
                 content = re.sub(r'\s+', ' ', content).strip()
+
+                # Reformat equations and wrap them in code blocks
+                content = wrap_equations_in_code_blocks(content)
 
                 # Try to parse Reason: and Answer: sections
                 if "Reason:" in content and "Answer:" in content:
