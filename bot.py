@@ -15,7 +15,7 @@ import cv2
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1-zero:free"  # Update this if you've changed the model
+MODEL = "deepseek/deepseek-r1:free"  # Update this if you've changed the model
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -60,11 +60,12 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
         "Your response must always be structured with exactly two sections:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, $\\frac{5}{k}$). Instead, use plain text for variables (e.g., x_1, 5/k) and wrap mathematical equations in Discord code blocks (```) for clarity. For example, write '5 = k * x_1' inside a code block like this:\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, \\frac{5}{k}, \\text, \\Rightarrow). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies). Wrap mathematical equations in Discord code blocks (```) for clarity. For example, write '5 = k * x_1' inside a code block like this:\n"
         "```\n5 = k * x_1\n```\n"
         "2) 'Answer:' - Provide your final answer in clear, proper sentences. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed.\n"
         "Do not use parentheses around 'Reasoning' or other variations—use 'Reason:' and 'Answer:' exactly as specified. "
         "Do not use bold markers (**) or any other Markdown formatting except for code blocks (```). "
+        "Ensure all code blocks are properly closed with ```. "
         "Even if the OCR text is incomplete or an error message, provide both sections, explaining the issue in 'Reason:' and suggesting a solution in 'Answer:'. "
         "Ensure all brackets are properly closed to avoid formatting errors."
     )
@@ -92,11 +93,16 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 # Clean up the AI response
                 # Remove all bold markers
                 content = content.replace("**", "")
-                # Remove stray brackets (curly, square, and parentheses if unmatched)
+                # Remove LaTeX symbols
+                content = content.replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\", "")
+                # Remove stray brackets
                 content = re.sub(r'\{[^}]*\}', lambda m: m.group(0).replace('{', '').replace('}', ''), content)
                 content = content.replace("{", "").replace("}", "")
-                content = re.sub(r'$$   [^   $$]*\]', lambda m: m.group(0).replace('[', '').replace(']', ''), content)
+                content = re.sub(r'$$ [^ $$]*\]', lambda m: m.group(0).replace('[', '').replace(']', ''), content)
                 content = content.replace("[", "").replace("]", "")
+                # Fix incomplete code blocks
+                if content.count("```") % 2 != 0:  # If there's an odd number of ```, add a closing one
+                    content += "\n```"
                 # Normalize whitespace
                 content = re.sub(r'\s+', ' ', content).strip()
 
@@ -105,18 +111,25 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                     reason_part = content.split("Answer:")[0].split("Reason:")[-1].strip()
                     answer_part = content.split("Answer:")[-1].strip()
                 else:
-                    # Fallback: split on the last "So," if present
+                    # Fallback: split on the last "So," if present, or assume the last sentence is the answer
                     if "So," in content:
                         parts = content.rsplit("So,", 1)
                         reason_part = parts[0].strip()
                         answer_part = "So, " + parts[1].strip()
                     else:
-                        reason_part = content
-                        answer_part = "I couldn't determine a clear answer due to formatting issues."
+                        sentences = content.split(". ")
+                        if len(sentences) > 1:
+                            reason_part = ". ".join(sentences[:-1]).strip()
+                            answer_part = sentences[-1].strip()
+                        else:
+                            reason_part = content
+                            answer_part = "I couldn't determine a clear answer due to formatting issues."
 
-                # Final cleanup: ensure no bold markers, stray brackets, or LaTeX remain
+                # Final cleanup: ensure no bold markers, LaTeX, or stray brackets remain
                 reason_part = reason_part.replace("**", "").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("$", "")
+                reason_part = reason_part.replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\", "")
                 answer_part = answer_part.replace("**", "").replace("{", "").replace("}", "").replace("[", "").replace("]", "").replace("$", "")
+                answer_part = answer_part.replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\", "")
                 reason_part = re.sub(r'\n\s*\n+', '\n', reason_part).strip()
                 answer_part = re.sub(r'\n\s*\n+', '\n', answer_part).strip()
 
