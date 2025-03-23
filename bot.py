@@ -27,7 +27,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # --- GLOBAL VARIABLES ---
 activated_channels = {}
-MAX_CONTEXT_MESSAGES = 20
+MAX_CONTEXT_MESSAGES = 10
 
 # --- HELPER FUNCTIONS ---
 def chunk_text(text: str, max_length: int = 2000):
