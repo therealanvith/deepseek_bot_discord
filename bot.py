@@ -72,6 +72,10 @@ def reformat_equation(text: str) -> str:
     # Add spaces around operators for readability
     text = re.sub(r'(\d|\w)([+\-*/=])', r'\1 \2', text)
     text = re.sub(r'([+\-*/=])(\d|\w)', r'\1 \2', text)
+    # Ensure spaces between variables and coefficients (e.g., k x_1 -> k * x_1)
+    text = re.sub(r'(\w+)(x_\d+)', r'\1 * \2', text)
+    # Fix spacing around parentheses
+    text = re.sub(r'$$ (\d+/\d+) $$(x_\d+)', r'(\1) * \2', text)
     return text
 
 def wrap_equations_in_code_blocks(text: str) -> str:
@@ -79,10 +83,10 @@ def wrap_equations_in_code_blocks(text: str) -> str:
     lines = text.split('\n')
     result = []
     for line in lines:
-        # Check if the line contains an equation (look for =, =>, or operators)
-        if re.search(r'[=+\-*/]|=>', line) and not line.strip().startswith('```'):
+        # Check if the line contains an equation (look for =, =>, operators, or variables like x_1)
+        if (re.search(r'[=+\-*/]|=>', line) or re.search(r'x_\d+', line)) and not line.strip().startswith('```'):
             # Remove any existing LaTeX markers
-            line = line.replace('$$  ', '').replace('$', '').strip()
+            line = line.replace('$$', '').replace('$', '').strip()
             # Reformat the equation
             line = reformat_equation(line)
             # Wrap in code block
@@ -95,7 +99,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. Your response will be sent directly to a Discord channel, so you must format it specifically for Discord's rendering. "
         "Your response must always be structured with exactly two sections:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$,   $$...$$  , \\frac{5}{k}, \\text, \\Rightarrow, \\left, \\right). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies, ( ) for parentheses). All mathematical equations must be written in plain text and wrapped in Discord code blocks (```) for clarity, with proper spacing for readability. For example, write '5 = k * x_1' inside a code block like this:\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, $$...$$, \\frac{5}{k}, \\text, \\Rightarrow, \\left, \\right). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies, ( ) for parentheses). All mathematical equations must be written in plain text and wrapped in Discord code blocks (```) for clarity, with proper spacing for readability. For example, write '5 = k * x_1' inside a code block like this:\n"
         "```\n5 = k * x_1\n```\n"
         "For complex expressions, add spaces around operators (e.g., '5 * x_1 - 2 * (7/5) * x_1' instead of '5x_1-2*(7/5)x_1'). Do not use quotation marks around equations.\n"
         "2) 'Answer:' - Provide your final answer in a single, concise sentence. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed. For example, 'Answer: The tension is 11 N, so the answer is C.'\n"
@@ -130,17 +134,20 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 # Remove all bold markers
                 content = content.replace("**", "")
                 # Remove LaTeX markers
-                content = content.replace("  $$", "").replace("$", "").replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\left", "(").replace("\\right", ")").replace("\\", "")
+                content = content.replace("$$", "").replace("$", "").replace("\\text", "").replace("\\frac", "").replace("\\Rightarrow", "=>").replace("\\times", "*").replace("\\left", "(").replace("\\right", ")").replace("\\", "")
                 # Remove stray brackets
                 content = re.sub(r'\{[^}]*\}', lambda m: m.group(0).replace('{', '').replace('}', ''), content)
                 content = content.replace("{", "").replace("}", "")
-                content = re.sub(r'$$ [^ $$]*\]', lambda m: m.group(0).replace('[', '').replace(']', ''), content)
+                content = re.sub(r'\[[^\]]*\]', lambda m: m.group(0).replace('[', '').replace(']', ''), content)
                 content = content.replace("[", "").replace("]", "")
                 # Fix incomplete code blocks
                 if content.count("```") % 2 != 0:  # If there's an odd number of ```, add a closing one
                     content += "\n```"
                 # Remove quotation marks around equations
                 content = re.sub(r'"([^"]*=[^"]*)"', r'\1', content)
+                # Fix typos
+                content = content.replace("5xl - 2x2", "5x_1 - 2x_2")
+                content = content.replace("step - by - step", "step-by-step")
                 # Normalize whitespace
                 content = re.sub(r'\s+', ' ', content).strip()
 
@@ -152,7 +159,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                     reason_part = content.split("Answer:")[0].split("Reason:")[-1].strip()
                     answer_part = content.split("Answer:")[-1].strip()
                 else:
-                    # Fallback: split on the last "So," or "Hence", or assume the last sentence is the answer
+                    # Fallback: split on the last "So," or "Hence", or "Therefore", or assume the last sentence is the answer
                     if "So," in content:
                         parts = content.rsplit("So,", 1)
                         reason_part = parts[0].strip()
@@ -161,6 +168,10 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                         parts = content.rsplit("Hence", 1)
                         reason_part = parts[0].strip()
                         answer_part = "Hence " + parts[1].strip()
+                    elif "Therefore" in content:
+                        parts = content.rsplit("Therefore", 1)
+                        reason_part = parts[0].strip()
+                        answer_part = "Therefore " + parts[1].strip()
                     else:
                         sentences = content.split(". ")
                         if len(sentences) > 1:
