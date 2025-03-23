@@ -5,36 +5,49 @@ on:
       - main
   schedule:
     - cron: '0 * * * *'  # Runs every hour on the hour
+
 jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v3
-      
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-          cache: 'pip'
-      
-      - name: Install Tesseract
+
+      - name: Install Tesseract and cache it
+        id: cache-tesseract
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
-      
-      - name: Save repo and dependencies
-        uses: actions/cache/save@v3
+          mkdir -p tesseract-cache/bin
+          mkdir -p tesseract-cache/share/tessdata
+          cp /usr/bin/tesseract tesseract-cache/bin/
+          cp -r /usr/share/tesseract-ocr/5/tessdata/* tesseract-cache/share/tessdata/
+
+      - name: Cache Tesseract files
+        uses: actions/cache@v3
         with:
-          path: |
-            .
-            ~/.cache/pip
-          key: ${{ github.sha }}-${{ github.run_id }}
+          path: tesseract-cache
+          key: ${{ runner.os }}-tesseract-${{ hashFiles('tesseract-cache/bin/tesseract') }}
+
+      - name: Cache virtual environment
+        id: cache-venv
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
+      - name: Set up virtual environment if cache miss
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
   bot:
     needs: setup
@@ -43,18 +56,37 @@ jobs:
       group: discord-bot
       cancel-in-progress: true
     steps:
-      - name: Restore repo and dependencies
+      - name: Checkout the repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Restore Tesseract cache
         uses: actions/cache/restore@v3
         with:
-          path: |
-            .
-            ~/.cache/pip
-          key: ${{ github.sha }}-${{ github.run_id }}
-          fail-on-cache-miss: true
+          path: tesseract-cache
+          key: ${{ runner.os }}-tesseract-${{ hashFiles('tesseract-cache/bin/tesseract') }}
+
+      - name: Restore virtual environment cache
+        uses: actions/cache/restore@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
+      - name: Set up Tesseract from cache
+        run: |
+          sudo cp tesseract-cache/bin/tesseract /usr/bin/
+          sudo mkdir -p /usr/share/tesseract-ocr/5/tessdata
+          sudo cp -r tesseract-cache/share/tessdata/* /usr/share/tesseract-ocr/5/tessdata/
+          tesseract --version  # Verify Tesseract is working
 
       - name: Run Discord bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
+          . .venv/bin/activate
           python bot.py
