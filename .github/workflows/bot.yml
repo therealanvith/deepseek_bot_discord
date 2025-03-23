@@ -30,20 +30,26 @@ jobs:
             dpkg-deb -x $deb tesseract-local
           done
 
-      - name: Fix library symlinks
+      - name: Debug and fix library symlinks
         run: |
           cd tesseract-local/usr/lib/x86_64-linux-gnu
-          ls -l
-          # Ensure libgif.so.7 symlink exists
-          if [ ! -e libgif.so.7 ]; then
-            ln -sf libgif.so.7.0.1 libgif.so.7 || echo "Warning: libgif.so.7.0.1 not found"
+          echo "Listing extracted libraries:"
+          ls -l libgif*
+          # Check for libgif.so.7.0.1 and create libgif.so.7 symlink if missing
+          if [ -f "libgif.so.7.0.1" ] && [ ! -e "libgif.so.7" ]; then
+            ln -sf libgif.so.7.0.1 libgif.so.7
+            echo "Created symlink: libgif.so.7 -> libgif.so.7.0.1"
+          elif [ ! -f "libgif.so.7.0.1" ]; then
+            echo "Error: libgif.so.7.0.1 not found in extracted files"
           fi
+          echo "Post-fix listing:"
+          ls -l libgif*
 
       - name: Cache Tesseract local installation
         uses: actions/cache@v3
         with:
           path: tesseract-local
-          key: ${{ runner.os }}-tesseract-v1
+          key: ${{ runner.os }}-tesseract-v2  # Updated key to force new cache
 
       - name: Cache virtual environment
         id: cache-venv
@@ -79,7 +85,7 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: tesseract-local
-          key: ${{ runner.os }}-tesseract-v1
+          key: ${{ runner.os }}-tesseract-v2  # Match updated key
 
       - name: Restore virtual environment cache
         uses: actions/cache/restore@v3
@@ -89,7 +95,11 @@ jobs:
 
       - name: Check cached libraries
         run: |
-          ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/lib*
+          echo "Listing cached libraries in bot job:"
+          ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/libgif*
+          # Verify LD_LIBRARY_PATH contents
+          echo "LD_LIBRARY_PATH contents:"
+          ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/
 
       - name: Set environment variables for Tesseract
         run: |
@@ -97,6 +107,7 @@ jobs:
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
           TESSDATA_DIR=$(find $GITHUB_WORKSPACE/tesseract-local -type d -name tessdata)
           echo "TESSDATA_PREFIX=$TESSDATA_DIR" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH set to: $LD_LIBRARY_PATH"
 
       - name: Verify Tesseract
         run: tesseract --version
