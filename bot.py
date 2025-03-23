@@ -228,8 +228,8 @@ async def on_message(message: discord.Message):
             if attachment.content_type.startswith("image/"):  # Only process images
                 text_from_image = await extract_text_from_image(attachment.url)
 
-                # Now include this extracted text in the prompt with context about it being from an image
-                prompt = f"Here is some text extracted from an image:\n{text_from_image}\nPlease respond with 'Reason:' and 'Answer:' sections based on the extracted text."
+                # Make sure the bot understands this is OCR-derived text
+                prompt = f"Here is the text extracted from an image using OCR:\n{text_from_image}\nPlease respond with 'Reason:' and 'Answer:' sections based on the extracted text from the image."
 
                 async with message.channel.typing():
                     answer, reason = await get_ai_response(prompt)
