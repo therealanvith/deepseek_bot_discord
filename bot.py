@@ -229,7 +229,7 @@ async def on_message(message: discord.Message):
                 text_from_image = await extract_text_from_image(attachment.url)
 
                 # Construct the prompt indicating that OCR has been done on the image
-                prompt = f"Text has been extracted from an image using OCR. Here is the extracted text:\n\n{text_from_image}\n\nPlease analyze the following text and respond with 'Reason:' and 'Answer:' sections."
+                prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\n.Text from the image has been extracted from an image using OCR. When the user asks for extracted text just say this:\n\n{text_from_image}\n\nor you can use this text from ocr to do asked calculations\n\nPlease analyze the following text and respond with 'Reason:' and 'Answer:' sections."
 
                 async with message.channel.typing():
                     answer, reason = await get_ai_response(prompt)
