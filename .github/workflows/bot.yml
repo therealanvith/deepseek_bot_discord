@@ -18,29 +18,23 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Tesseract dependencies
+      - name: Download Tesseract packages
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            tesseract-ocr \
-            libtesseract5 \
-            liblept5 \
-            libgif7 \
-            libjpeg8 \
-            libpng16-16 \
-            libtiff6 \
-            libwebp7 \
-            libopenjp2-7 \
-            zlib1g \
-            libarchive13 \
-            libcurl4
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr libtesseract5 liblept5 tesseract-ocr-eng \
+            libgif7 libjpeg8 libpng16-16 libtiff6 libwebp7 libopenjp2-7 zlib1g
 
-      - name: Install Python dependencies
+      - name: Cache Tesseract local installation
+        uses: actions/cache@v3
+        with:
+          path: tesseract-local
+          key: ${{ runner.os }}-tesseract-v1
+
+      - name: Install dependencies
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
 
   bot:
     needs: setup
@@ -57,15 +51,27 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Restore Tesseract cache
+        uses: actions/cache/restore@v3
+        with:
+          path: tesseract-local
+          key: ${{ runner.os }}-tesseract-v1
+
+      - name: Restore virtual environment cache
+        uses: actions/cache/restore@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
       - name: Set environment variables for Tesseract
         run: |
-          echo "PATH=$PATH:/usr/local/bin" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata" >> $GITHUB_ENV
+          echo "PATH=$PATH:$GITHUB_WORKSPACE/tesseract-local/usr/bin" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+          TESSDATA_DIR=$(find $GITHUB_WORKSPACE/tesseract-local -type d -name tessdata)
+          echo "TESSDATA_PREFIX=$TESSDATA_DIR" >> $GITHUB_ENV
 
-      - name: Verify Tesseract installation
-        run: |
-          tesseract --version
+      - name: Verify Tesseract
+        run: tesseract --version
 
       - name: Run Discord bot
         env:
