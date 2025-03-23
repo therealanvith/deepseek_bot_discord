@@ -21,25 +21,14 @@ intents = discord.Intents.default()
 intents.message_content = True  # Enable "Message Content Intent" in Developer Portal
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- GLOBAL VARIABLES --- (you can store them in a database if needed)
-message_context = {}  # A dictionary to store conversation context per channel
+# --- GLOBAL VARIABLES ---
+activated_channels = {}  # To track which channels are activated for full responses
+MAX_CONTEXT_MESSAGES = 20  # Max number of messages to fetch from the past
 
 # --- HELPER FUNCTIONS ---
 def chunk_text(text: str, max_length: int = 2000):
     """Splits text into chunks of up to max_length characters."""
     return [text[i : i + max_length] for i in range(0, len(text), max_length)]
-
-async def fetch_referenced_message(message: discord.Message):
-    """Safely fetch the message that the user is replying to."""
-    if not message.reference:
-        return None
-    ref = message.reference.resolved
-    if ref:
-        return ref
-    try:
-        return await message.channel.fetch_message(message.reference.message_id)
-    except Exception:
-        return None
 
 async def process_image(image_url: str):
     """Uses OCR to extract text from an image URL."""
@@ -99,11 +88,28 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         return "I'm having trouble responding right now. Please try again later.", "Seems like issue connecting to API"
 
 
+# --- BOT COMMAND HANDLERS ---
+
+@bot.command()
+async def activate(ctx):
+    """Activates the bot to respond to all messages in the current channel."""
+    activated_channels[ctx.channel.id] = True
+    await ctx.send(f"The bot is now activated and will respond to all messages in this channel!")
+
+@bot.command()
+async def deactivate(ctx):
+    """Deactivates the bot from responding to all messages in the current channel."""
+    if ctx.channel.id in activated_channels:
+        del activated_channels[ctx.channel.id]
+        await ctx.send(f"The bot is now deactivated and will only respond to mentions in this channel.")
+    else:
+        await ctx.send(f"The bot is not activated in this channel.")
+
 # --- BOT EVENT HANDLERS ---
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -111,59 +117,40 @@ async def on_message(message: discord.Message):
     Processes incoming messages:
     - If replying to the bot or mentioning the bot, builds a prompt.
     - Retrieves the AI response with 'Reason:' and 'Answer:'.
-    - Sends only the first message as a reply; all subsequent messages are sent normally.
+    - If the bot is activated, responds to all messages.
     """
     if message.author == bot.user:
         return
 
-    # --- Handling Image OCR ---
-    if message.attachments:
-        # Look for image attachments
-        for attachment in message.attachments:
-            if attachment.content_type.startswith("image"):
-                image_text = await process_image(attachment.url)
-                prompt = f"User sent an image with text: {image_text}\nPlease respond with 'Reason:' and 'Answer:' sections."
-                break
-        else:
-            # If no images are present, continue as normal
-            prompt = message.content
-    else:
-        # Handle non-image messages
+    # If the bot is activated for the channel, respond to all messages
+    if message.channel.id in activated_channels:
         prompt = message.content
 
-    # --- Keep track of conversation context ---
-    if message.channel.id not in message_context:
-        message_context[message.channel.id] = []
+        # Fetch the last MAX_CONTEXT_MESSAGES from the channel's message history
+        full_context = ""
+        async for msg in message.channel.history(limit=MAX_CONTEXT_MESSAGES):
+            full_context = f"{msg.author.name}: {msg.content}\n" + full_context
 
-    message_context[message.channel.id].append({"author": message.author.name, "content": message.content})
+        # Combine the context and the current message to create a prompt
+        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
 
-    # If there's a lot of context, you may want to trim older messages
-    # This is optional based on how much context you want to provide to the AI
-    if len(message_context[message.channel.id]) > 20:  # Limit to 20 messages
-        message_context[message.channel.id].pop(0)
+        # --- Process AI Response ---
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            # Format the reasoning with a "Reasoning: " label
+            reasoning_message = f"(Reasoning: {reason})"
+            answer_message = answer
 
-    # Combine the context and the current message to create a prompt
-    full_context = "\n".join([f"{msg['author']}: {msg['content']}" for msg in message_context[message.channel.id]])
+            # Send reasoning first
+            reasoning_chunks = chunk_text(reasoning_message)
+            if reasoning_chunks:
+                await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
+                for chunk in reasoning_chunks[1:]:
+                    await message.channel.send(chunk)
 
-    prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{prompt}\nPlease respond with 'Reason:' and 'Answer:' sections."
-
-    # --- Process AI Response ---
-    async with message.channel.typing():
-        answer, reason = await get_ai_response(prompt)
-        # Format the reasoning with a "Reasoning: " label
-        reasoning_message = f"(Reasoning: {reason})"
-        answer_message = answer
-
-        # Send reasoning first
-        reasoning_chunks = chunk_text(reasoning_message)
-        if reasoning_chunks:
-            await message.channel.send(reasoning_chunks[0], reference=message, mention_author=False)
-            for chunk in reasoning_chunks[1:]:
+            # Send answer
+            for chunk in chunk_text(answer_message):
                 await message.channel.send(chunk)
-
-        # Send answer
-        for chunk in chunk_text(answer_message):
-            await message.channel.send(chunk)
 
     # Allow commands to be processed after handling the message
     await bot.process_commands(message)
