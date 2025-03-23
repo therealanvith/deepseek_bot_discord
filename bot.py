@@ -15,7 +15,7 @@ import cv2
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1:free"  # Update this if you've changed the model
+MODEL = "deepseek/deepseek-r1-zero:free"  # Updated to the new model
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -60,9 +60,10 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
         "Your response must always be structured with exactly two sections:\n"
-        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, \\frac{5}{k}, \\text, \\Rightarrow). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies). Wrap mathematical equations in Discord code blocks (```) for clarity. For example, write '5 = k * x_1' inside a code block like this:\n"
+        "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step. Do not use LaTeX (e.g., $x_1$, \\frac{5}{k}, \\text, \\Rightarrow). Instead, use plain text for variables (e.g., x_1, 5/k) and symbols (e.g., => for implies). All mathematical equations must be wrapped in Discord code blocks (```) for clarity, with proper spacing for readability. For example, write '5 = k * x_1' inside a code block like this:\n"
         "```\n5 = k * x_1\n```\n"
-        "2) 'Answer:' - Provide your final answer in clear, proper sentences. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed.\n"
+        "For complex expressions, add spaces around operators (e.g., '5 * x_1 - 2 * (7/5) * x_1' instead of '5x_1-2*(7/5)x_1'). Do not use quotation marks around equations.\n"
+        "2) 'Answer:' - Provide your final answer in a single, concise sentence. Use plain text for variables and wrap any equations in Discord code blocks (```) if needed. For example, 'The tension is 11 N, so the answer is C.'\n"
         "Do not use parentheses around 'Reasoning' or other variations—use 'Reason:' and 'Answer:' exactly as specified. "
         "Do not use bold markers (**) or any other Markdown formatting except for code blocks (```). "
         "Ensure all code blocks are properly closed with ```. "
@@ -103,6 +104,8 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
                 # Fix incomplete code blocks
                 if content.count("```") % 2 != 0:  # If there's an odd number of ```, add a closing one
                     content += "\n```"
+                # Remove quotation marks around equations
+                content = re.sub(r'"([^"]*=[^"]*)"', r'\1', content)
                 # Normalize whitespace
                 content = re.sub(r'\s+', ' ', content).strip()
 
