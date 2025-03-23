@@ -18,12 +18,20 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"
 
 # Tesseract configuration
-pytesseract.pytesseract.tesseract_cmd = f"{os.environ.get('PATH', '')}/tesseract"
+# Set Tesseract path directly to the cached binary location
+TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_BINARY_PATH
 TESSERACT_CONFIG = '--oem 1 --psm 3 -l eng+osd'
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Verify Tesseract path at startup
+if not os.path.exists(TESSERACT_BINARY_PATH):
+    logger.error(f"Tesseract binary not found at {TESSERACT_BINARY_PATH}")
+else:
+    logger.info(f"Tesseract binary set to {TESSERACT_BINARY_PATH}")
 
 # --- BOT SETUP ---
 intents = discord.Intents.default()
@@ -95,38 +103,27 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         return "I'm having trouble responding right now. Please try again later.", "API connection issue"
 
 def preprocess_image(img):
-    """Apply advanced preprocessing techniques to improve OCR accuracy."""
     try:
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         original_height, original_width = img_cv.shape[:2]
         
-        # Upscale more aggressively for small text
         scale_factor = 3.0 if (original_height < 1000 or original_width < 1000) else 1.0
         img_cv = cv2.resize(img_cv, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
         
-        # Convert to grayscale
         gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        
-        # Adaptive contrast based on mean value
         mean_value = np.mean(gray)
-        if mean_value < 127:  # Dark background, light text
+        if mean_value < 127:
             gray = cv2.bitwise_not(gray)
-            alpha = 2.0  # Higher contrast for inverted images
+            alpha = 2.0
         else:
-            alpha = 1.8  # Slightly higher contrast for normal images
-        beta = 10  # Slight brightness boost
+            alpha = 1.8
+        beta = 10
         
-        # Denoise
         denoised = cv2.fastNlMeansDenoising(gray, None, 15, 7, 21)
-        
-        # Enhance contrast
         contrasted = cv2.convertScaleAbs(denoised, alpha=alpha, beta=beta)
-        
-        # Multiple thresholding methods
         _, binary = cv2.threshold(contrasted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         adaptive = cv2.adaptiveThreshold(contrasted, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         
-        # Dilation to connect text
         kernel = np.ones((2, 2), np.uint8)
         dilated_binary = cv2.dilate(binary, kernel, iterations=1)
         dilated_adaptive = cv2.dilate(adaptive, kernel, iterations=1)
@@ -138,7 +135,6 @@ def preprocess_image(img):
         return [img]
 
 async def extract_text_from_image(image_url: str) -> str:
-    """Extracts text from an image using OCR with multiple preprocessing methods."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as response:
@@ -150,9 +146,8 @@ async def extract_text_from_image(image_url: str) -> str:
                     best_text = ""
                     best_confidence = 0
                     
-                    # Try more PSM modes for complex layouts
                     for img in processed_images:
-                        for psm in [1, 3, 4, 6, 7, 8, 11]:  # Added 1 (raw line), 7 (single line), 8 (single word), 11 (sparse text)
+                        for psm in [1, 3, 4, 6, 7, 8, 11]:
                             config = f'--oem 1 --psm {psm} -l eng+osd'
                             ocr_data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
                             logger.info(f"OCR data for PSM {psm}: {ocr_data['text']}")
