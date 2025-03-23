@@ -30,6 +30,15 @@ jobs:
             dpkg-deb -x $deb tesseract-local
           done
 
+      - name: Fix library symlinks
+        run: |
+          cd tesseract-local/usr/lib/x86_64-linux-gnu
+          ls -l
+          # Ensure libgif.so.7 symlink exists
+          if [ ! -e libgif.so.7 ]; then
+            ln -sf libgif.so.7.0.1 libgif.so.7 || echo "Warning: libgif.so.7.0.1 not found"
+          fi
+
       - name: Cache Tesseract local installation
         uses: actions/cache@v3
         with:
