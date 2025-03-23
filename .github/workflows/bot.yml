@@ -1,41 +1,39 @@
 name: Discord Bot CI
-
 on:
   push:
     branches:
       - main
   schedule:
     - cron: '0 * * * *'  # Runs every hour on the hour
-
 jobs:
   bot:
     runs-on: ubuntu-latest
-    
-    # Concurrency settings
     concurrency:
       group: discord-bot
       cancel-in-progress: true
-
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v2
-
+        uses: actions/checkout@v3
+      
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
+          cache: 'pip'
+      
       - name: Install Tesseract
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
+          pip install --no-cache-dir -r requirements.txt
+      
       - name: Run Discord bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Pass BOT_TOKEN from GitHub secrets
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           python bot.py
