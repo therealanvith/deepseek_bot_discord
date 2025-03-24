@@ -1,3 +1,6 @@
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# IMPORTS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 import discord
 import aiohttp
 import asyncio
@@ -5,63 +8,107 @@ import re
 import os
 import logging
 from discord.ext import commands
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import io
 import pytesseract
 import numpy as np
 import cv2
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup  # For web scraping Google search results
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# CONFIGURATION
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1-zero:free"
-GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
+
+# Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_BINARY_PATH
 TESSERACT_CONFIG = '--oem 1 --psm 3 -l eng+osd'
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler('bot.log'), logging.StreamHandler()])
+# Logging setup with file handler
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),  # Log to a file
+        logging.StreamHandler()  # Also log to console
+    ]
+)
 logger = logging.getLogger(__name__)
 
+# Validate Tesseract binary path
 if not os.path.exists(TESSERACT_BINARY_PATH):
     logger.error(f"Tesseract binary not found at {TESSERACT_BINARY_PATH}")
 else:
     logger.info(f"Tesseract binary set to {TESSERACT_BINARY_PATH}")
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# BOT SETUP
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# GLOBAL VARIABLES
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# HELPER FUNCTIONS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 def chunk_text(text: str, max_length: int = 2000) -> list:
+    """Splits text into chunks smaller than max_length for Discord's message limit."""
     return [text[i:i + max_length] for i in range(0, len(text), max_length)]
 
+async def fetch_referenced_message(message: discord.Message) -> discord.Message:
+    """Fetches the message being replied to, if any."""
+    if not message.reference:
+        return None
+    ref = message.reference.resolved
+    if ref:
+        return ref
+    try:
+        return await message.channel.fetch_message(message.reference.message_id)
+    except Exception as e:
+        logger.error(f"Error fetching referenced message: {e}")
+        return None
+
 async def perform_google_search(query: str) -> str:
+    """Performs a Google search and returns the top results as a string."""
     try:
         async with aiohttp.ClientSession() as session:
-            # Add a timeout to prevent long delays
-            async with session.get(
-                f"{GOOGLE_SEARCH_URL}{'+'.join(query.split())}",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"},
-                timeout=5  # 5-second timeout
-            ) as response:
+            encoded_query = "+".join(query.split())
+            url = f"{GOOGLE_SEARCH_URL}{encoded_query}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            # Add timeout to prevent long delays
+            async with session.get(url, headers=headers, timeout=5) as response:
                 if response.status != 200:
                     logger.error(f"Google search failed with status: {response.status}")
                     return "Error: Unable to perform Google search."
+                
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                # Reduce the number of results to speed up parsing
+                
+                # Limit to top 3 results to speed up parsing
                 results = []
-                for g in soup.find_all('div', class_='g')[:3]:  # Limit to top 3 results
+                for g in soup.find_all('div', class_='g')[:3]:
                     title = g.find('h3')
                     snippet = g.find('div', class_='VwiC3b')
                     if title and snippet:
                         results.append(f"Title: {title.text}\nSnippet: {snippet.text}\n")
+                
                 if not results:
                     return "No search results found."
+                
                 search_result = "\n".join(results)
                 logger.info(f"Search results for query '{query}':\n{search_result}")
                 return search_result
@@ -73,6 +120,7 @@ async def perform_google_search(query: str) -> str:
         return f"Error during Google search: {str(e)}"
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
+    """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
         "Your response must always be structured with exactly two sections:\n"
@@ -80,30 +128,59 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "2) 'Answer:' - Provide your final answer in a single, concise sentence.\n"
         "Do not use any special formatting, code blocks, or LaTeX. Respond with plain text only."
     )
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": MODEL, "messages": [{"role": "system", "content": system_instructions}, {"role": "user", "content": user_prompt}]}
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system_instructions},
+            {"role": "user", "content": user_prompt}
+        ],
+    }
+
     try:
         async with aiohttp.ClientSession() as session:
+            # Add timeout to prevent API hangs
             async with session.post(API_URL, headers=headers, json=data, timeout=10) as resp:
                 resp.raise_for_status()
                 response_json = await resp.json()
                 content = response_json["choices"][0]["message"]["content"]
                 logger.info(f"AI API response: {content}")
-                # Minimal processing: just ensure Reason: and Answer: are separated
+
+                # Minimal processing: just separate Reason: and Answer:
                 if "Reason:" in content and "Answer:" in content:
                     reason_part = content.split("Answer:")[0].split("Reason:")[-1].strip()
                     answer_part = content.split("Answer:")[-1].strip()
                 else:
                     # Fallback if the API doesn't format correctly
-                    sentences = content.split(". ")
-                    if len(sentences) > 1:
-                        reason_part = ". ".join(sentences[:-1]).strip()
-                        answer_part = sentences[-1].strip()
+                    if "So," in content:
+                        parts = content.rsplit("So,", 1)
+                        reason_part = parts[0].strip()
+                        answer_part = "So, " + parts[1].strip()
+                    elif "Hence" in content:
+                        parts = content.rsplit("Hence", 1)
+                        reason_part = parts[0].strip()
+                        answer_part = "Hence " + parts[1].strip()
+                    elif "Therefore" in content:
+                        parts = content.rsplit("Therefore", 1)
+                        reason_part = parts[0].strip()
+                        answer_part = "Therefore " + parts[1].strip()
                     else:
-                        reason_part = content
-                        answer_part = "I couldn't determine a clear answer."
-                    answer_part = "Answer: " + answer_part
+                        sentences = content.split(". ")
+                        if len(sentences) > 1:
+                            reason_part = ". ".join(sentences[:-1]).strip()
+                            answer_part = sentences[-1].strip()
+                        else:
+                            reason_part = content
+                            answer_part = "I couldn't determine a clear answer due to formatting issues."
+                    if not answer_part.startswith("Answer:"):
+                        answer_part = "Answer: " + answer_part
+
                 return answer_part, reason_part
+
     except asyncio.TimeoutError:
         logger.error("AI API request timed out")
         return "Answer: I'm having trouble responding right now. Please try again later.", "Reason: API request timed out"
@@ -112,11 +189,14 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         return "Answer: I'm having trouble responding right now. Please try again later.", "Reason: API connection issue"
 
 def preprocess_image(img: Image.Image) -> list:
+    """Preprocesses an image for better OCR accuracy."""
     try:
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         original_height, original_width = img_cv.shape[:2]
+        
         scale_factor = 3.0 if (original_height < 1000 or original_width < 1000) else 1.0
         img_cv = cv2.resize(img_cv, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+        
         gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
         mean_value = np.mean(gray)
         if mean_value < 127:
@@ -125,45 +205,59 @@ def preprocess_image(img: Image.Image) -> list:
         else:
             alpha = 1.8
         beta = 10
+        
         denoised = cv2.fastNlMeansDenoising(gray, None, 15, 7, 21)
         contrasted = cv2.convertScaleAbs(denoised, alpha=alpha, beta=beta)
         _, binary = cv2.threshold(contrasted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         adaptive = cv2.adaptiveThreshold(contrasted, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        
         kernel = np.ones((2, 2), np.uint8)
         dilated_binary = cv2.dilate(binary, kernel, iterations=1)
         dilated_adaptive = cv2.dilate(adaptive, kernel, iterations=1)
+        
         return [Image.fromarray(dilated_binary), Image.fromarray(dilated_adaptive), Image.fromarray(contrasted)]
+    
     except Exception as e:
         logger.error(f"Image preprocessing error: {str(e)}")
         return [img]
 
 async def extract_text_from_image(image_url: str) -> str:
+    """Extracts text from an image using OCR."""
     try:
         async with aiohttp.ClientSession() as session:
+            # Add timeout to prevent long delays
             async with session.get(image_url, timeout=5) as response:
                 if response.status == 200:
                     img_data = await response.read()
                     original_img = Image.open(io.BytesIO(img_data))
+                    
                     processed_images = preprocess_image(original_img)
                     best_text = ""
                     best_confidence = 0
+                    
                     for img in processed_images:
                         for psm in [1, 3, 4, 6, 7, 8, 11]:
                             config = f'--oem 1 --psm {psm} -l eng+osd'
                             ocr_data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
                             logger.info(f"OCR data for PSM {psm}: {ocr_data['text']}")
+                            
                             conf_values = [float(conf) for conf in ocr_data['conf'] if conf != '-1']
                             avg_conf = sum(conf_values) / len(conf_values) if conf_values else 0
                             text = pytesseract.image_to_string(img, config=config)
+                            
                             logger.info(f"Average confidence for PSM {psm}: {avg_conf:.2f}")
+                            
                             if text.strip() and avg_conf > best_confidence:
                                 best_text = text
                                 best_confidence = avg_conf
+                    
                     if not best_text.strip():
                         best_text = pytesseract.image_to_string(original_img, config=TESSERACT_CONFIG)
                         logger.info(f"Fallback OCR on original image: {best_text}")
+                    
                     if best_text.strip():
                         logger.info(f"Best OCR text selected with confidence {best_confidence:.2f}: {best_text}")
+                    
                     result = best_text.strip() if best_text.strip() else "No text detected in the image."
                     logger.info(f"Final OCR result: {result}")
                     return result
@@ -178,18 +272,25 @@ async def extract_text_from_image(image_url: str) -> str:
         return f"Error processing image: {str(e)}"
 
 async def get_conversation_context(channel: discord.TextChannel, limit: int = MAX_CONTEXT_MESSAGES) -> str:
+    """Gathers recent conversation context from the channel."""
     full_context = ""
     async for msg in channel.history(limit=limit):
         full_context = f"{msg.author.name}: {msg.content}\n" + full_context
     return full_context
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# BOT COMMAND HANDLERS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 @bot.command()
 async def activate(ctx: commands.Context):
+    """Activates the bot to respond to all messages in the channel."""
     activated_channels[ctx.channel.id] = True
     await ctx.send("The bot is now activated and will respond to all messages in this channel!")
 
 @bot.command()
 async def deactivate(ctx: commands.Context):
+    """Deactivates the bot from responding to all messages in the channel."""
     if ctx.channel.id in activated_channels:
         del activated_channels[ctx.channel.id]
         await ctx.send("The bot is now deactivated and will only respond to mentions and replies.")
@@ -198,19 +299,31 @@ async def deactivate(ctx: commands.Context):
 
 @bot.command()
 async def ping(ctx: commands.Context):
+    """Simple ping command to test bot responsiveness."""
     await ctx.send('Pong!')
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# BOT EVENT HANDLERS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 @bot.event
 async def on_ready():
+    """Logs when the bot is ready."""
     logger.info(f"Logged in as {bot.user}")
 
 @bot.event
 async def on_message(message: discord.Message):
+    """Handles incoming messages and triggers responses."""
     if message.author == bot.user or message.author.bot:
         return
+    
+    # Log the received message
     logger.info(f"Received message from {message.author.name}: {message.content}")
+    
     await bot.process_commands(message)
     full_context = await get_conversation_context(message.channel)
+    
+    # Handle replies to the bot (works in both activated and deactivated channels)
     if message.reference and message.reference.resolved and message.reference.resolved.author == bot.user:
         referenced_msg = message.reference.resolved
         prompt = f"Previous bot message:\n{referenced_msg.content}\n\nUser's new message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
@@ -219,6 +332,8 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
         return
+    
+    # Handle replies to another person's message with a bot mention (works in both activated and deactivated channels)
     if message.reference and message.reference.resolved and message.reference.resolved.author != bot.user and bot.user.mentioned_in(message):
         referenced_msg = message.reference.resolved
         prompt = (
@@ -232,6 +347,8 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
         return
+    
+    # Handle bot mentions (works in both activated and deactivated channels)
     if bot.user.mentioned_in(message):
         prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
         async with message.channel.typing():
@@ -239,13 +356,19 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
         return
+    
+    # Handle #search keyword
     if "#search" in message.content.lower():
         search_query = message.content.lower().split("#search", 1)[1].strip()
         if not search_query:
             await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
             return
+        
         async with message.channel.typing():
+            # Perform search for the user-provided query
             user_search_results = await perform_google_search(search_query)
+            
+            # Check if there's an image attachment and perform OCR + search
             ocr_search_results = ""
             text_from_image = ""
             has_image = False
@@ -257,7 +380,9 @@ async def on_message(message: discord.Message):
                         ocr_search_results = await perform_google_search(text_from_image)
                     else:
                         ocr_search_results = "No relevant text extracted from the image to search."
-                    break
+                    break  # Process only the first image
+            
+            # Prepare prompt based on whether an image was provided
             if has_image:
                 prompt = (
                     f"Context of conversation:\n{full_context}\n\n"
@@ -278,10 +403,14 @@ async def on_message(message: discord.Message):
                     "Please process the search results and provide a concise summary or answer based on the user's query. "
                     "Respond with 'Reason:' and 'Answer:' sections."
                 )
+            
+            # Get response from DeepSeek API
             answer, reason = await get_ai_response(prompt)
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
         return
+    
+    # Handle image attachments (OCR without search)
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
             async with message.channel.typing():
@@ -294,10 +423,13 @@ async def on_message(message: discord.Message):
                     "Otherwise, use the extracted text to solve the problem or answer the user's request. "
                     "Please respond with 'Reason:' and 'Answer:' sections."
                 )
+                
                 answer, reason = await get_ai_response(prompt)
                 await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
                 await message.channel.send(f"Answer: {answer}")
             return
+    
+    # Handle messages in activated channels
     if message.channel.id in activated_channels:
         prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
         async with message.channel.typing():
@@ -305,5 +437,8 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# RUN THE BOT
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 if __name__ == "__main__":
     bot.run(DISCORD_BOT_TOKEN)
