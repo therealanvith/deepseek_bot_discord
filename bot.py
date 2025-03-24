@@ -22,7 +22,7 @@ DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
-GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
+GOOGLE_SEARCH_URL = "https://www.perplexity.ai/search?q="  # Base URL for Google search
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
