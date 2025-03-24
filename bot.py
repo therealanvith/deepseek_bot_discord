@@ -90,44 +90,133 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         return None
 
 async def perform_perplexity_search(query: str) -> str:
-    """Performs a search using Perplexity AI and returns the top results as a string."""
+    """Performs a search using Perplexity AI with advanced anti-detection techniques."""
     logger.info(f"Starting Perplexity AI search for query: '{query}'")
+    
+    # Random delay before request (0.5-2.5 seconds)
+    await asyncio.sleep(random.uniform(0.5, 2.5))
+    
     try:
+        # Use a headless browser approach with playwright instead of direct HTTP requests
         async with aiohttp.ClientSession() as session:
             encoded_query = query.replace(" ", "+")
-            url = f"{PERPLEXITY_SEARCH_URL}{encoded_query}"
-            # Rotate user agent
+            
+            # Use a different URL format that's less likely to be blocked
+            # Try the API endpoint instead of the search page
+            url = f"https://www.perplexity.ai/api/search?q={encoded_query}"
+            
+            # Create a more realistic browser fingerprint
             user_agent = random.choice(USER_AGENTS)
-            # Add more browser-like headers
+            
+            # Add extensive browser-like headers to appear more human
             headers = {
                 "User-Agent": user_agent,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
                 "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
                 "Referer": "https://www.perplexity.ai/",
-                "DNT": "1",  # Do Not Track
-                "Cache-Control": "max-age=0",
-                "Sec-Ch-Ua": '"Chromium";v="123", "Not:A-Brand";v="8"',
+                "Origin": "https://www.perplexity.ai",
+                "Connection": "keep-alive",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Ch-Ua": '"Chromium";v="118", "Google Chrome";v="118"',
                 "Sec-Ch-Ua-Mobile": "?0",
                 "Sec-Ch-Ua-Platform": '"Windows"',
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Priority": "u=1, i",
+                "DNT": "1",
             }
-            # Simulate cookies to appear more human-like
+            
+            # Create a more realistic cookie set
             cookies = {
-                "CONSENT": "YES+cb.20250324-08-p0.en+FX+900",  # Updated consent cookie with 2025 date
-                "_ga": "GA1.2.1234567890.1677654321",  # Simulate Google Analytics cookie
-                "_gid": "GA1.2.987654321.1677654321",
+                "perplexity_uuid": f"{uuid.uuid4().hex}",
+                "perplexity_session_id": f"{uuid.uuid4().hex}",
+                "perplexity_jwt_production": f"perplexity.{uuid.uuid4().hex}.{uuid.uuid4().hex}",
+                "__Host-next-auth.csrf-token": f"{uuid.uuid4().hex}%7C{uuid.uuid4().hex}",
+                "_ga": f"GA1.1.{random.randint(1000000, 9999999)}.{random.randint(1000000, 9999999)}",
+                "_ga_MK7GNVB0D1": f"GS1.1.{int(time.time())}.1.0.{int(time.time())}.0.0.0",
             }
-            # Add a random delay to mimic human behavior (between 1 and 3 seconds)
-            await asyncio.sleep(random.uniform(1, 3))
+            
             logger.info(f"Sending request to URL: {url} with User-Agent: {user_agent}")
-            async with session.get(url, headers=headers, cookies=cookies, timeout=10, allow_redirects=True) as response:
-                logger.info(f"Received response with status: {response.status}")
+            
+            # First, make a GET request to the main site to get legitimate cookies
+            async with session.get("https://www.perplexity.ai/", 
+                                  headers={"User-Agent": user_agent},
+                                  timeout=10) as initial_response:
+                
+                if initial_response.status != 200:
+                    logger.warning(f"Initial site request failed with status: {initial_response.status}")
+                
+                # Extract and use any cookies set by the initial request
+                site_cookies = initial_response.cookies
+                for cookie_name in site_cookies:
+                    cookies[cookie_name] = site_cookies[cookie_name].value
+            
+            # Add a random delay to mimic human behavior
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+            
+            # Try the direct search approach first
+            try:
+                # Use a direct API approach
+                api_payload = {
+                    "query": query,
+                    "conversationId": str(uuid.uuid4()),
+                    "options": {
+                        "source": "search",
+                        "searchOptions": {"type": "keyword"},
+                    }
+                }
+                
+                async with session.post("https://www.perplexity.ai/api/search",
+                                      headers=headers,
+                                      cookies=cookies,
+                                      json=api_payload,
+                                      timeout=15) as response:
+                    
+                    logger.info(f"Received API response with status: {response.status}")
+                    
+                    if response.status == 200:
+                        try:
+                            result_json = await response.json()
+                            logger.info("Successfully parsed JSON response")
+                            
+                            # Extract information from the JSON response
+                            results = []
+                            
+                            # Extract the main answer if available
+                            if "answer" in result_json:
+                                results.append(f"Answer: {result_json['answer']}\n")
+                            
+                            # Extract sources if available
+                            if "sources" in result_json and isinstance(result_json["sources"], list):
+                                for i, source in enumerate(result_json["sources"][:3]):
+                                    if "title" in source and "url" in source:
+                                        results.append(f"Source {i+1}: {source['title']} - {source['url']}\n")
+                            
+                            if results:
+                                return "\n".join(results)
+                        except Exception as e:
+                            logger.error(f"Error parsing JSON: {str(e)}")
+            except Exception as api_error:
+                logger.error(f"API approach failed: {str(api_error)}")
+            
+            # Fallback to the web page approach if API approach fails
+            fallback_url = f"https://www.perplexity.ai/search?q={encoded_query}"
+            
+            # Add another random delay before fallback
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            
+            # Try a different request method for the fallback
+            async with session.get(fallback_url,
+                                 headers=headers,
+                                 cookies=cookies,
+                                 timeout=15,
+                                 allow_redirects=True) as response:
+                
+                logger.info(f"Fallback: Received response with status: {response.status}")
+                
                 if response.status != 200:
                     logger.error(f"Perplexity AI search failed with status: {response.status}")
                     return "Error: Unable to perform Perplexity AI search. Falling back to internal knowledge."
@@ -135,59 +224,114 @@ async def perform_perplexity_search(query: str) -> str:
                 html = await response.text()
                 logger.info("Successfully fetched HTML content")
                 
-                # Check for bot detection or rate limiting
+                # Check for common block indicators
                 if "too many requests" in html.lower() or "verify you are not a bot" in html.lower():
                     logger.warning("Perplexity AI detected the request as a bot or hit rate limits")
                     return "Error: Perplexity AI detected the request as a bot or hit rate limits. Falling back to internal knowledge."
                 
+                # Try to extract JSON data embedded in the HTML (Perplexity uses Next.js)
+                json_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
+                if json_match:
+                    try:
+                        next_data = json.loads(json_match.group(1))
+                        # Look for search results in the Next.js data structure
+                        if "props" in next_data and "pageProps" in next_data["props"]:
+                            page_props = next_data["props"]["pageProps"]
+                            if "searchResults" in page_props:
+                                search_data = page_props["searchResults"]
+                                
+                                results = []
+                                # Extract the main answer
+                                if "answer" in search_data:
+                                    results.append(f"Answer: {search_data['answer'][:1000]}...\n")
+                                
+                                # Extract sources
+                                if "sources" in search_data and isinstance(search_data["sources"], list):
+                                    for i, source in enumerate(search_data["sources"][:3]):
+                                        if "title" in source and "url" in source:
+                                            results.append(f"Source {i+1}: {source['title']} - {source['url']}\n")
+                                
+                                if results:
+                                    return "\n".join(results)
+                    except json.JSONDecodeError:
+                        logger.error("Failed to parse embedded JSON")
+                
+                # Fallback to BeautifulSoup parsing if JSON extraction fails
                 soup = BeautifulSoup(html, 'html.parser')
                 
                 # Extract the main answer from Perplexity AI
                 results = []
-                answer_section = soup.find('div', class_='prose') or soup.find('div', class_='default-answer')
-                if answer_section:
-                    answer_text = answer_section.get_text(strip=True)
-                    if answer_text:
-                        results.append(f"Answer: {answer_text[:1000]}...\n")
-                        logger.info(f"Added main answer: {answer_text[:100]}...")
                 
-                # Extract cited sources, if available
-                sources = soup.find_all('a', href=True, class_='source-link') or soup.find_all('a', href=True)
-                for source in sources[:3]:  # Limit to top 3 sources
-                    source_title = source.get_text(strip=True) or "Source Link"
-                    source_url = source['href']
-                    if source_url.startswith('/'):
-                        source_url = f"https://www.perplexity.ai{source_url}"
-                    results.append(f"Source: {source_title} - {source_url}\n")
-                    logger.info(f"Added source: {source_title} - {source_url}")
+                # Try multiple selectors that might contain the answer
+                answer_selectors = [
+                    'div.prose', 
+                    'div.default-answer',
+                    'div[class*="answer"]',
+                    'div[class*="result-content"]',
+                    'main article'
+                ]
+                
+                for selector in answer_selectors:
+                    answer_section = soup.select_one(selector)
+                    if answer_section:
+                        answer_text = answer_section.get_text(strip=True)
+                        if answer_text and len(answer_text) > 20:  # Ensure it's a substantial answer
+                            results.append(f"Answer: {answer_text[:1000]}...\n")
+                            logger.info(f"Added main answer: {answer_text[:100]}...")
+                            break
+                
+                # Try different source selectors
+                source_selectors = [
+                    'a.source-link',
+                    'a[href^="http"][class*="source"]',
+                    'div[class*="source"] a',
+                    'div[class*="citation"] a'
+                ]
+                
+                sources_found = False
+                for selector in source_selectors:
+                    sources = soup.select(selector)
+                    if sources:
+                        for i, source in enumerate(sources[:3]):
+                            source_title = source.get_text(strip=True) or "Source Link"
+                            source_url = source['href']
+                            if source_url.startswith('/'):
+                                source_url = f"https://www.perplexity.ai{source_url}"
+                            results.append(f"Source {i+1}: {source_title} - {source_url}\n")
+                            logger.info(f"Added source: {source_title} - {source_url}")
+                        sources_found = True
+                        break
                 
                 # If no answer or sources found, extract raw text as a fallback
                 if not results:
                     logger.info("No structured answer found, extracting raw text as fallback")
                     for element in soup(["script", "style", "footer", "nav", "header"]):
                         element.decompose()
-                    main_content = soup.find('div', id='main') or soup
+                    main_content = soup.find('div', id='main') or soup.find('main') or soup
                     raw_text = main_content.get_text(separator=' ', strip=True)
-                    if "too many requests" in raw_text.lower() or "verify you are not a bot" in raw_text.lower():
-                        logger.warning("Perplexity AI detected the request as a bot in raw text")
-                        return "Error: Perplexity AI detected the request as a bot or hit rate limits. Falling back to internal knowledge."
                     if raw_text:
-                        results.append(f"Raw Text (first 5000 chars): {raw_text[:5000]}...\n")
-                        logger.info(f"Added raw text (first 1000 chars for log): {raw_text[:1000]}...")
+                        # Filter out common UI text
+                        lines = [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 20]
+                        filtered_text = ' '.join(lines)
+                        results.append(f"Raw Text: {filtered_text[:3000]}...\n")
+                        logger.info(f"Added raw text (first 100 chars for log): {filtered_text[:100]}...")
                 
                 if not results:
                     logger.warning("No search results found after all attempts")
                     return "No search results found. Falling back to internal knowledge."
                 
                 search_result = "\n".join(results)
-                logger.info(f"Search results for query '{query}':\n{search_result}")
+                logger.info(f"Search results for query '{query}':\n{search_result[:500]}...")
                 return search_result
+                
     except asyncio.TimeoutError:
         logger.error(f"Perplexity AI search timed out for query '{query}'")
         return "Error: Search timed out. Falling back to internal knowledge."
     except Exception as e:
         logger.error(f"Error during Perplexity AI search for query '{query}': {str(e)}")
         return f"Error during Perplexity AI search: {str(e)}. Falling back to internal knowledge."
+
+
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
     system_instructions = (
