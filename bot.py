@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup  # For web scraping Google search results
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1-zero:free"
+MODEL = "deepseek/deepseek-r1:free"
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
 
 # Tesseract configuration
@@ -126,7 +126,6 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "Your response must always be structured with exactly two sections:\n"
         "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step.\n"
         "2) 'Answer:' - Provide your final answer in a single, concise sentence.\n"
-        "Do not use any special formatting, code blocks, or LaTeX. Respond with plain text only."
     )
 
     headers = {
