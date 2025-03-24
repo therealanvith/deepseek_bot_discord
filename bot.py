@@ -166,7 +166,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(API_URL, headers=headers, json=data, timeout=10) as resp:
+            async with session.post(API_URL, headers=headers, json=data, timeout=1000) as resp:
                 resp.raise_for_status()
                 response_json = await resp.json()
                 content = response_json["choices"][0]["message"]["content"]
@@ -247,7 +247,7 @@ async def extract_text_from_image(image_url: str) -> str:
     """Extracts text from an image using OCR."""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=5) as response:
+            async with session.get(image_url, timeout=50) as response:
                 if response.status == 200:
                     img_data = await response.read()
                     original_img = Image.open(io.BytesIO(img_data))
