@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup  # For web scraping Google search results
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1:free"
+MODEL = "deepseek/deepseek-r1:free"  # Updated model name as per request
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
 
 # Tesseract configuration
@@ -82,6 +82,7 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
 
 async def perform_google_search(query: str) -> str:
     """Performs a Google search and returns the top results as a string."""
+    logger.info(f"Starting Google search for query: '{query}'")
     try:
         async with aiohttp.ClientSession() as session:
             encoded_query = "+".join(query.split())
@@ -89,24 +90,31 @@ async def perform_google_search(query: str) -> str:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            # Add timeout to prevent long delays
+            logger.info(f"Sending request to URL: {url}")
             async with session.get(url, headers=headers, timeout=5) as response:
+                logger.info(f"Received response with status: {response.status}")
                 if response.status != 200:
                     logger.error(f"Google search failed with status: {response.status}")
                     return "Error: Unable to perform Google search."
                 
                 html = await response.text()
+                logger.info("Successfully fetched HTML content")
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Limit to top 3 results to speed up parsing
+                # Try alternative selectors if the default one fails
                 results = []
-                for g in soup.find_all('div', class_='g')[:3]:
-                    title = g.find('h3')
-                    snippet = g.find('div', class_='VwiC3b')
+                search_results = soup.find_all('div', class_='g') or soup.find_all('div', class_='tF2Cxc')
+                logger.info(f"Found {len(search_results)} potential search result elements")
+                
+                for g in search_results[:3]:  # Limit to top 3 results
+                    title = g.find('h3') or g.find('div', role='heading')
+                    snippet = g.find('div', class_='VwiC3b') or g.find('span', class_='aCOpRe')
                     if title and snippet:
                         results.append(f"Title: {title.text}\nSnippet: {snippet.text}\n")
+                        logger.info(f"Added result - Title: {title.text}")
                 
                 if not results:
+                    logger.warning("No search results found after parsing")
                     return "No search results found."
                 
                 search_result = "\n".join(results)
