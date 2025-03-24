@@ -142,8 +142,8 @@ async def perform_google_search(query: str) -> str:
                     raw_text = soup.get_text(separator=' ', strip=True)
                     # Limit to first 500 characters to avoid overwhelming the AI
                     if raw_text:
-                        results.append(f"Raw Text (first 500 chars): {raw_text[:500]}...\n")
-                        logger.info(f"Added raw text: {raw_text[:100]}...")
+                        results.append(f"Raw Text (first 5000 chars): {raw_text[:5000]}...\n")
+                        logger.info(f"Added raw text: {raw_text[:5000]}...")
                 
                 if not results:
                     logger.warning("No search results found after all attempts")
