@@ -180,6 +180,7 @@ async def perform_perplexity_search(query: str) -> str:
         logger.error(f"Error during Perplexity AI search for query '{query}': {str(e)}")
         return f"Error during Perplexity AI search: {str(e)}. Falling back to internal knowledge."
 
+
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
     system_instructions = (
