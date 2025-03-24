@@ -386,7 +386,7 @@ async def on_message(message: discord.Message):
         
         async with message.channel.typing():
             # Perform search for the user-provided query using Perplexity AI
-            user_search_results = await perform_perplexity_search(search_query)
+            user_search_results = await perform_search_with_serpapi(search_query)
             
             # Check if there's an image attachment and perform OCR + search
             ocr_search_results = ""
@@ -397,7 +397,7 @@ async def on_message(message: discord.Message):
                     has_image = True
                     text_from_image = await extract_text_from_image(attachment.url)
                     if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                        ocr_search_results = await perform_perplexity_search(text_from_image)
+                        ocr_search_results = await perform_search_with_serpapi(text_from_image)
                     else:
                         ocr_search_results = "No relevant text extracted from the image to search."
                     break  # Process only the first image
