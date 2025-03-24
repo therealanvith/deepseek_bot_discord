@@ -8,14 +8,13 @@ import re
 import os
 import logging
 import random
-import time
 from discord.ext import commands
 from PIL import Image, ImageEnhance, ImageFilter
 import io
 import pytesseract
 import numpy as np
 import cv2
-from bs4 import BeautifulSoup  # For web scraping Google search results
+from bs4 import BeautifulSoup  # For web scraping Perplexity AI search results
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CONFIGURATION
@@ -24,7 +23,7 @@ DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
-GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
+PERPLEXITY_SEARCH_URL = "https://www.perplexity.ai/search?q="  # Base URL for Perplexity AI search
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -60,12 +59,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
-# List of user agents for rotation
+# Updated list of modern user agents for rotation
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.2210.91",
 ]
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -89,106 +89,96 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         logger.error(f"Error fetching referenced message: {e}")
         return None
 
-async def perform_google_search(query: str) -> str:
-    """Performs a Google search and returns the top results as a string."""
-    logger.info(f"Starting Google search for query: '{query}'")
+async def perform_perplexity_search(query: str) -> str:
+    """Performs a search using Perplexity AI and returns the top results as a string."""
+    logger.info(f"Starting Perplexity AI search for query: '{query}'")
     try:
-        # Add a small delay to avoid rate limiting
-        await asyncio.sleep(random.uniform(1, 3))
-        
         async with aiohttp.ClientSession() as session:
-            encoded_query = "+".join(query.split())
-            url = f"{GOOGLE_SEARCH_URL}{encoded_query}"
+            encoded_query = query.replace(" ", "+")
+            url = f"{PERPLEXITY_SEARCH_URL}{encoded_query}"
             # Rotate user agent
             user_agent = random.choice(USER_AGENTS)
+            # Add more browser-like headers
             headers = {
                 "User-Agent": user_agent,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Accept-Encoding": "gzip, deflate, br",
                 "Connection": "keep-alive",
                 "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Referer": "https://www.perplexity.ai/",  # Simulate coming from Perplexity's homepage
+            }
+            # Simulate cookies to appear more human-like
+            cookies = {
+                "CONSENT": "YES+cb.20210328-17-p0.en+FX+900",  # Simulate consent cookie
             }
             logger.info(f"Sending request to URL: {url} with User-Agent: {user_agent}")
-            async with session.get(url, headers=headers, timeout=10) as response:
+            async with session.get(url, headers=headers, cookies=cookies, timeout=10) as response:
                 logger.info(f"Received response with status: {response.status}")
                 if response.status != 200:
-                    logger.error(f"Google search failed with status: {response.status}")
-                    return "Error: Unable to perform Google search."
+                    logger.error(f"Perplexity AI search failed with status: {response.status}")
+                    return "Error: Unable to perform Perplexity AI search. Falling back to internal knowledge."
                 
                 html = await response.text()
                 logger.info("Successfully fetched HTML content")
                 
-                # Check for CAPTCHA or bot detection page
-                if "Please click here if you are not redirected within a few seconds" in html:
-                    logger.warning("Google detected the request as a bot (CAPTCHA page served)")
-                    return "Error: Google detected the request as a bot and served a CAPTCHA page. Please try again later or use a different search method."
+                # Check for bot detection or rate limiting
+                if "too many requests" in html.lower() or "verify you are not a bot" in html.lower():
+                    logger.warning("Perplexity AI detected the request as a bot or hit rate limits")
+                    return "Error: Perplexity AI detected the request as a bot or hit rate limits. Falling back to internal knowledge."
                 
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Try to extract standard search results
+                # Extract the main answer from Perplexity AI
                 results = []
-                # Updated selector for modern Google search results
-                search_results = soup.find_all('div', class_='MjjYud') or soup.find_all('div', class_='g') or soup.find_all('div', class_='tF2Cxc')
-                logger.info(f"Found {len(search_results)} potential search result elements using standard selectors")
+                answer_section = soup.find('div', class_='prose') or soup.find('div', class_='default-answer')
+                if answer_section:
+                    answer_text = answer_section.get_text(strip=True)
+                    if answer_text:
+                        results.append(f"Answer: {answer_text[:1000]}...\n")  # Limit to 1000 chars
+                        logger.info(f"Added main answer: {answer_text[:100]}...")
                 
-                for g in search_results[:3]:  # Limit to top 3 results
-                    title = g.find('h3') or g.find('div', role='heading')
-                    snippet = g.find('div', class_='VwiC3b') or g.find('span', class_='aCOpRe') or g.find('div', class_='IsZvec')
-                    if title and snippet:
-                        results.append(f"Title: {title.text}\nSnippet: {snippet.text}\n")
-                        logger.info(f"Added result - Title: {title.text}")
+                # Extract cited sources, if available
+                sources = soup.find_all('a', href=True, class_='source-link') or soup.find_all('a', href=True)
+                for source in sources[:3]:  # Limit to top 3 sources
+                    source_title = source.get_text(strip=True) or "Source Link"
+                    source_url = source['href']
+                    if source_url.startswith('/'):
+                        source_url = f"https://www.perplexity.ai{source_url}"
+                    results.append(f"Source: {source_title} - {source_url}\n")
+                    logger.info(f"Added source: {source_title} - {source_url}")
                 
-                # If no standard results, try to extract from featured snippet or knowledge panel
+                # If no answer or sources found, extract raw text as a fallback
                 if not results:
-                    logger.info("No standard search results found, trying featured snippet or knowledge panel")
-                    # Featured snippet (often in div.kCrYT or div.xpd)
-                    featured_snippet = soup.find('div', class_='kCrYT') or soup.find('div', class_='xpd')
-                    if featured_snippet:
-                        snippet_text = featured_snippet.get_text(strip=True)
-                        if snippet_text:
-                            results.append(f"Featured Snippet: {snippet_text}\n")
-                            logger.info(f"Added featured snippet: {snippet_text[:100]}...")
-                    
-                    # Knowledge panel (often in div.kp-wholepage or div.knowledge-panel)
-                    knowledge_panel = soup.find('div', class_='kp-wholepage') or soup.find('div', class_='knowledge-panel')
-                    if knowledge_panel:
-                        panel_text = knowledge_panel.get_text(strip=True)
-                        if panel_text:
-                            results.append(f"Knowledge Panel: {panel_text[:200]}...\n")
-                            logger.info(f"Added knowledge panel: {panel_text[:100]}...")
-                
-                # If still no results, extract raw text as a last resort
-                if not results:
-                    logger.info("No structured results found, extracting raw text as fallback")
-                    # Remove scripts, styles, and irrelevant sections
+                    logger.info("No structured answer found, extracting raw text as fallback")
                     for element in soup(["script", "style", "footer", "nav", "header"]):
                         element.decompose()
-                    # Extract main content (try to focus on the body or main content area)
-                    main_content = soup.find('div', id='main') or soup.find('div', id='center_col') or soup
+                    main_content = soup.find('div', id='main') or soup
                     raw_text = main_content.get_text(separator=' ', strip=True)
-                    # Check for CAPTCHA message in raw text
-                    if "Please click here if you are not redirected within a few seconds" in raw_text:
-                        logger.warning("Google detected the request as a bot (CAPTCHA message found in raw text)")
-                        return "Error: Google detected the request as a bot and served a CAPTCHA page. Please try again later or use a different search method."
-                    # Limit to 5000 characters
+                    if "too many requests" in raw_text.lower() or "verify you are not a bot" in raw_text.lower():
+                        logger.warning("Perplexity AI detected the request as a bot in raw text")
+                        return "Error: Perplexity AI detected the request as a bot or hit rate limits. Falling back to internal knowledge."
                     if raw_text:
                         results.append(f"Raw Text (first 5000 chars): {raw_text[:5000]}...\n")
                         logger.info(f"Added raw text (first 1000 chars for log): {raw_text[:1000]}...")
                 
                 if not results:
                     logger.warning("No search results found after all attempts")
-                    return "No search results found."
+                    return "No search results found. Falling back to internal knowledge."
                 
                 search_result = "\n".join(results)
                 logger.info(f"Search results for query '{query}':\n{search_result}")
                 return search_result
     except asyncio.TimeoutError:
-        logger.error(f"Google search timed out for query '{query}'")
-        return "Error: Search timed out. Please try a simpler query."
+        logger.error(f"Perplexity AI search timed out for query '{query}'")
+        return "Error: Search timed out. Falling back to internal knowledge."
     except Exception as e:
-        logger.error(f"Error during Google search for query '{query}': {str(e)}")
-        return f"Error during Google search: {str(e)}"
+        logger.error(f"Error during Perplexity AI search for query '{query}': {str(e)}")
+        return f"Error during Perplexity AI search: {str(e)}. Falling back to internal knowledge."
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
@@ -214,7 +204,6 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            # Add timeout to prevent API hangs
             async with session.post(API_URL, headers=headers, json=data, timeout=10) as resp:
                 resp.raise_for_status()
                 response_json = await resp.json()
@@ -296,7 +285,6 @@ async def extract_text_from_image(image_url: str) -> str:
     """Extracts text from an image using OCR."""
     try:
         async with aiohttp.ClientSession() as session:
-            # Add timeout to prevent long delays
             async with session.get(image_url, timeout=5) as response:
                 if response.status == 200:
                     img_data = await response.read()
@@ -436,8 +424,8 @@ async def on_message(message: discord.Message):
             return
         
         async with message.channel.typing():
-            # Perform search for the user-provided query
-            user_search_results = await perform_google_search(search_query)
+            # Perform search for the user-provided query using Perplexity AI
+            user_search_results = await perform_perplexity_search(search_query)
             
             # Check if there's an image attachment and perform OCR + search
             ocr_search_results = ""
@@ -448,7 +436,7 @@ async def on_message(message: discord.Message):
                     has_image = True
                     text_from_image = await extract_text_from_image(attachment.url)
                     if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                        ocr_search_results = await perform_google_search(text_from_image)
+                        ocr_search_results = await perform_perplexity_search(text_from_image)
                     else:
                         ocr_search_results = "No relevant text extracted from the image to search."
                     break  # Process only the first image
@@ -472,6 +460,16 @@ async def on_message(message: discord.Message):
                     f"The user has requested an internet search with the query '{search_query}'. "
                     f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
                     "Please process the search results and provide a concise summary or answer based on the user's query. "
+                    "Respond with 'Reason:' and 'Answer:' sections."
+                )
+            
+            # If search failed due to bot detection or rate limits, fall back to internal knowledge
+            if "Falling back to internal knowledge" in user_search_results:
+                prompt = (
+                    f"Context of conversation:\n{full_context}\n\n"
+                    f"User's current message:\n{message.content}\n\n"
+                    f"The user has requested an internet search with the query '{search_query}', but the search failed due to Perplexity AI's bot detection or rate limits. "
+                    "Please answer the query using your internal knowledge instead. "
                     "Respond with 'Reason:' and 'Answer:' sections."
                 )
             
