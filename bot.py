@@ -102,7 +102,7 @@ async def perform_search_with_serpapi(query: str) -> str:
             
             url = "https://serpapi.com/search"
             
-            async with session.get(url, params=params, timeout=15) as response:
+            async with session.get(url, params=params, timeout=1200) as response:
                 logger.info(f"Received SerpApi response with status: {response.status}")
                 
                 if response.status != 200:
