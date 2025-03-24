@@ -24,9 +24,9 @@ import json
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
+SERPAPI_KEY = os.getenv('SERPAPI_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
-PERPLEXITY_SEARCH_URL = "https://www.perplexity.ai/search?q="  # Base URL for Perplexity AI search
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -62,15 +62,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
-# Update the USER_AGENTS list with more recent browser versions (as of 2025)
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/123.0.2420.97",
-]
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -93,175 +84,62 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         return None
 
 
-async def perform_perplexity_search(query: str) -> str:
-    """Performs a search using Perplexity AI with advanced anti-detection techniques."""
-    logger.info(f"Starting Perplexity AI search for query: '{query}'")
+async def perform_search_with_serpapi(query: str) -> str:
+    """Performs a search using SerpApi instead of direct scraping."""
+    logger.info(f"Starting SerpApi search for query: '{query}'")
+
     
-    # Random delay before request (0.5-2.5 seconds)
-    await asyncio.sleep(random.uniform(0.5, 2.5))
     
     try:
-        # Use a headless browser approach with playwright instead of direct HTTP requests
         async with aiohttp.ClientSession() as session:
-            encoded_query = query.replace(" ", "+")
-            
-            # Use a different URL format that's less likely to be blocked
-            # Try the API endpoint instead of the search page
-            url = f"https://www.perplexity.ai/api/search?q={encoded_query}"
-            
-            # Create a more realistic browser fingerprint
-            user_agent = random.choice(USER_AGENTS)
-            
-            # Add extensive browser-like headers to appear more human
-            headers = {
-                "User-Agent": user_agent,
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Referer": "https://www.perplexity.ai/",
-                "Origin": "https://www.perplexity.ai",
-                "Connection": "keep-alive",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "Sec-Ch-Ua": '"Chromium";v="118", "Google Chrome";v="118"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "Priority": "u=1, i",
-                "DNT": "1",
+            params = {
+                "engine": "google",
+                "q": query,
+                "api_key": SERPAPI_KEY,
+                "num": 5  # Number of results
             }
             
-            # Simplified cookie approach - just use the session cookies
-            cookies = {}
+            url = "https://serpapi.com/search"
             
-            logger.info(f"Sending request to URL: {url} with User-Agent: {user_agent}")
-            
-            # First, make a GET request to the main site to get legitimate cookies
-            async with session.get("https://www.perplexity.ai/", 
-                                  headers={"User-Agent": user_agent},
-                                  timeout=10) as initial_response:
-                
-                if initial_response.status != 200:
-                    logger.warning(f"Initial site request failed with status: {initial_response.status}")
-                
-                # Extract and use any cookies set by the initial request
-                site_cookies = initial_response.cookies
-                for cookie_name in site_cookies:
-                    cookies[cookie_name] = site_cookies[cookie_name].value
-            
-            # Add a random delay to mimic human behavior
-            await asyncio.sleep(random.uniform(1.0, 3.0))
-            
-            # Try the web page search directly
-            fallback_url = f"https://www.perplexity.ai/search?q={encoded_query}"
-            
-            # Try a more reliable approach
-            async with session.get(fallback_url,
-                                 headers=headers,
-                                 cookies=cookies,
-                                 timeout=15,
-                                 allow_redirects=True) as response:
-                
-                logger.info(f"Search: Received response with status: {response.status}")
+            async with session.get(url, params=params, timeout=15) as response:
+                logger.info(f"Received SerpApi response with status: {response.status}")
                 
                 if response.status != 200:
-                    logger.error(f"Perplexity AI search failed with status: {response.status}")
-                    return "Error: Unable to perform Perplexity AI search. Falling back to internal knowledge."
+                    logger.error(f"SerpApi search failed with status: {response.status}")
+                    return "Error: Unable to perform search. Falling back to internal knowledge."
                 
-                html = await response.text()
-                logger.info("Successfully fetched HTML content")
+                result_json = await response.json()
                 
-                # Check for common block indicators
-                if "too many requests" in html.lower() or "verify you are not a bot" in html.lower():
-                    logger.warning("Perplexity AI detected the request as a bot or hit rate limits")
-                    return "Error: Perplexity AI detected the request as a bot or hit rate limits. Falling back to internal knowledge."
-                
-                # Fallback to BeautifulSoup parsing
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # Extract the main answer from Perplexity AI
+                # Process the results
                 results = []
                 
-                # Try multiple selectors that might contain the answer
-                answer_selectors = [
-                    'div.prose', 
-                    'div.default-answer',
-                    'div[class*="answer"]',
-                    'div[class*="result-content"]',
-                    'main article'
-                ]
+                # Extract organic results
+                if "organic_results" in result_json:
+                    for i, result in enumerate(result_json["organic_results"][:3]):
+                        title = result.get("title", "No title")
+                        link = result.get("link", "No link")
+                        snippet = result.get("snippet", "No description available")
+                        results.append(f"Result {i+1}: {title}\nURL: {link}\nDescription: {snippet}\n")
                 
-                for selector in answer_selectors:
-                    answer_elements = soup.select(selector)
-                    for answer_section in answer_elements:
-                        answer_text = answer_section.get_text(strip=True)
-                        if answer_text and len(answer_text) > 20:  # Ensure it's a substantial answer
-                            results.append(f"Answer: {answer_text[:1000]}...\n")
-                            logger.info(f"Added main answer: {answer_text[:100]}...")
-                            break
-                    if results:
-                        break
-                
-                # Try different source selectors
-                source_selectors = [
-                    'a.source-link',
-                    'a[href^="http"][class*="source"]',
-                    'div[class*="source"] a',
-                    'div[class*="citation"] a'
-                ]
-                
-                sources_found = False
-                for selector in source_selectors:
-                    sources = soup.select(selector)
-                    if sources:
-                        for i, source in enumerate(sources[:3]):
-                            source_title = source.get_text(strip=True) or "Source Link"
-                            source_url = source['href']
-                            if source_url.startswith('/'):
-                                source_url = f"https://www.perplexity.ai{source_url}"
-                            results.append(f"Source {i+1}: {source_title} - {source_url}\n")
-                            logger.info(f"Added source: {source_title} - {source_url}")
-                        sources_found = True
-                        break
-                
-                # If no results found yet, try a more aggressive search for any links
-                if not results and not sources_found:
-                    all_links = soup.find_all('a', href=True)
-                    external_links = [link for link in all_links if link['href'].startswith('http') and 'perplexity.ai' not in link['href']]
-                    for i, link in enumerate(external_links[:5]):
-                        link_text = link.get_text(strip=True) or "Link"
-                        results.append(f"Found Link {i+1}: {link_text} - {link['href']}\n")
-                
-                # If still no structured content found, extract raw text as a fallback
-                if not results:
-                    logger.info("No structured answer found, extracting raw text as fallback")
-                    for element in soup(["script", "style", "footer", "nav", "header"]):
-                        element.decompose()
-                    main_content = soup.find('div', id='main') or soup.find('main') or soup
-                    raw_text = main_content.get_text(separator=' ', strip=True)
-                    if raw_text:
-                        # Filter out common UI text
-                        lines = [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 20]
-                        filtered_text = ' '.join(lines)
-                        results.append(f"Raw Text: {filtered_text[:3000]}...\n")
-                        logger.info(f"Added raw text (first 100 chars for log): {filtered_text[:100]}...")
+                # Add knowledge graph if available
+                if "knowledge_graph" in result_json:
+                    kg = result_json["knowledge_graph"]
+                    title = kg.get("title", "")
+                    description = kg.get("description", "")
+                    if title and description:
+                        results.append(f"Knowledge Graph: {title} - {description}\n")
                 
                 if not results:
-                    logger.warning("No search results found after all attempts")
                     return "No search results found. Falling back to internal knowledge."
                 
                 search_result = "\n".join(results)
                 logger.info(f"Search results for query '{query}':\n{search_result[:500]}...")
                 return search_result
                 
-    except asyncio.TimeoutError:
-        logger.error(f"Perplexity AI search timed out for query '{query}'")
-        return "Error: Search timed out. Falling back to internal knowledge."
     except Exception as e:
-        logger.error(f"Error during Perplexity AI search for query '{query}': {str(e)}")
-        return f"Error during Perplexity AI search: {str(e)}. Falling back to internal knowledge."
+        logger.error(f"Error during SerpApi search for query '{query}': {str(e)}")
+        return f"Error during search: {str(e)}. Falling back to internal knowledge."
+
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
