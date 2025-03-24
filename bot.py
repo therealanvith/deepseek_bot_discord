@@ -59,13 +59,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
-# Updated list of modern user agents for rotation
+# Update the USER_AGENTS list with more recent browser versions (as of 2025)
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.2210.91",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/123.0.2420.97",
 ]
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -110,14 +110,23 @@ async def perform_perplexity_search(query: str) -> str:
                 "Sec-Fetch-Mode": "navigate",
                 "Sec-Fetch-Site": "none",
                 "Sec-Fetch-User": "?1",
-                "Referer": "https://www.perplexity.ai/",  # Simulate coming from Perplexity's homepage
+                "Referer": "https://www.perplexity.ai/",
+                "DNT": "1",  # Do Not Track
+                "Cache-Control": "max-age=0",
+                "Sec-Ch-Ua": '"Chromium";v="123", "Not:A-Brand";v="8"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
             }
             # Simulate cookies to appear more human-like
             cookies = {
-                "CONSENT": "YES+cb.20210328-17-p0.en+FX+900",  # Simulate consent cookie
+                "CONSENT": "YES+cb.20250324-08-p0.en+FX+900",  # Updated consent cookie with 2025 date
+                "_ga": "GA1.2.1234567890.1677654321",  # Simulate Google Analytics cookie
+                "_gid": "GA1.2.987654321.1677654321",
             }
+            # Add a random delay to mimic human behavior (between 1 and 3 seconds)
+            await asyncio.sleep(random.uniform(1, 3))
             logger.info(f"Sending request to URL: {url} with User-Agent: {user_agent}")
-            async with session.get(url, headers=headers, cookies=cookies, timeout=10) as response:
+            async with session.get(url, headers=headers, cookies=cookies, timeout=10, allow_redirects=True) as response:
                 logger.info(f"Received response with status: {response.status}")
                 if response.status != 200:
                     logger.error(f"Perplexity AI search failed with status: {response.status}")
@@ -139,7 +148,7 @@ async def perform_perplexity_search(query: str) -> str:
                 if answer_section:
                     answer_text = answer_section.get_text(strip=True)
                     if answer_text:
-                        results.append(f"Answer: {answer_text[:1000]}...\n")  # Limit to 1000 chars
+                        results.append(f"Answer: {answer_text[:1000]}...\n")
                         logger.info(f"Added main answer: {answer_text[:100]}...")
                 
                 # Extract cited sources, if available
@@ -179,8 +188,6 @@ async def perform_perplexity_search(query: str) -> str:
     except Exception as e:
         logger.error(f"Error during Perplexity AI search for query '{query}': {str(e)}")
         return f"Error during Perplexity AI search: {str(e)}. Falling back to internal knowledge."
-
-
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
     system_instructions = (
