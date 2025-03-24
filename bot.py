@@ -87,14 +87,15 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
 async def perform_search_with_serpapi(query: str) -> str:
     """Performs a search using SerpApi instead of direct scraping."""
     logger.info(f"Starting SerpApi search for query: '{query}'")
-
     
+    if not query or not SERPAPI_KEY:
+        return "Error: Missing search query or API key. Falling back to internal knowledge."
     
     try:
         async with aiohttp.ClientSession() as session:
             params = {
                 "engine": "google",
-                "q": query,
+                "q": str(query),  # Ensure query is a string
                 "api_key": SERPAPI_KEY,
                 "num": 5  # Number of results
             }
