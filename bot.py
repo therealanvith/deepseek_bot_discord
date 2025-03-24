@@ -370,4 +370,115 @@ async def on_message(message: discord.Message):
         async with message.channel.typing():
             answer, reason = await get_ai_response(prompt)
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await
+            await message.channel.send(f"Answer: {answer}")
+        return
+    
+    # Handle replies to another person's message with a bot mention (works in both activated and deactivated channels)
+    if message.reference and message.reference.resolved and message.reference.resolved.author != bot.user and bot.user.mentioned_in(message):
+        referenced_msg = message.reference.resolved
+        prompt = (
+            f"Context of conversation:\n{full_context}\n\n"
+            f"The user replied to another person's message: {referenced_msg.author.name}: {referenced_msg.content}\n"
+            f"User's reply mentioning the bot: {message.content}\n"
+            "Please respond with 'Reason:' and 'Answer:' sections."
+        )
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+            await message.channel.send(f"Answer: {answer}")
+        return
+    
+    # Handle bot mentions (works in both activated and deactivated channels)
+    if bot.user.mentioned_in(message):
+        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+            await message.channel.send(f"Answer: {answer}")
+        return
+    
+    # Handle #search keyword
+    if "#search" in message.content.lower():
+        search_query = message.content.lower().split("#search", 1)[1].strip()
+        if not search_query:
+            await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
+            return
+        
+        async with message.channel.typing():
+            # Perform search for the user-provided query
+            user_search_results = await perform_google_search(search_query)
+            
+            # Check if there's an image attachment and perform OCR + search
+            ocr_search_results = ""
+            text_from_image = ""
+            has_image = False
+            for attachment in message.attachments:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    has_image = True
+                    text_from_image = await extract_text_from_image(attachment.url)
+                    if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
+                        ocr_search_results = await perform_google_search(text_from_image)
+                    else:
+                        ocr_search_results = "No relevant text extracted from the image to search."
+                    break  # Process only the first image
+            
+            # Prepare prompt based on whether an image was provided
+            if has_image:
+                prompt = (
+                    f"Context of conversation:\n{full_context}\n\n"
+                    f"User's current message:\n{message.content}\n\n"
+                    f"The user has requested an internet search with the query '{search_query}'. "
+                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
+                    f"Additionally, an image was provided, and the following text was extracted using OCR:\n\n{text_from_image}\n\n"
+                    f"Below are the top search results for the OCR-extracted text:\n\n{ocr_search_results}\n\n"
+                    "Please process both sets of search results and provide a concise summary or answer based on the user's query and the OCR-extracted text. "
+                    "Respond with 'Reason:' and 'Answer:' sections."
+                )
+            else:
+                prompt = (
+                    f"Context of conversation:\n{full_context}\n\n"
+                    f"User's current message:\n{message.content}\n\n"
+                    f"The user has requested an internet search with the query '{search_query}'. "
+                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
+                    "Please process the search results and provide a concise summary or answer based on the user's query. "
+                    "Respond with 'Reason:' and 'Answer:' sections."
+                )
+            
+            # Get response from DeepSeek API
+            answer, reason = await get_ai_response(prompt)
+            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+            await message.channel.send(f"Answer: {answer}")
+        return
+    
+    # Handle image attachments (OCR without search)
+    for attachment in message.attachments:
+        if attachment.content_type and attachment.content_type.startswith("image/"):
+            async with message.channel.typing():
+                text_from_image = await extract_text_from_image(attachment.url)
+                prompt = (
+                    f"Context of conversation:\n{full_context}\n\n"
+                    f"User's current message:\n{message.content}\n\n"
+                    f"Text from the image has been extracted using OCR:\n\n{text_from_image}\n\n"
+                    "If the OCR text is 'No text detected in the image,' explain in the 'Reason:' section that the image text couldn't be extracted and suggest the user provide a clearer image or type the text manually. "
+                    "Otherwise, use the extracted text to solve the problem or answer the user's request. "
+                    "Please respond with 'Reason:' and 'Answer:' sections."
+                )
+                
+                answer, reason = await get_ai_response(prompt)
+                await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+                await message.channel.send(f"Answer: {answer}")
+            return
+    
+    # Handle messages in activated channels
+    if message.channel.id in activated_channels:
+        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
+        async with message.channel.typing():
+            answer, reason = await get_ai_response(prompt)
+            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+            await message.channel.send(f"Answer: {answer}")
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# RUN THE BOT
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+if __name__ == "__main__":
+    bot.run(DISCORD_BOT_TOKEN)
