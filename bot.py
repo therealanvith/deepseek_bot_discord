@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup  # For web scraping Google search results
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "deepseek/deepseek-r1:free"  # Updated model name as per request
+MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
 
 # Tesseract configuration
@@ -101,20 +101,52 @@ async def perform_google_search(query: str) -> str:
                 logger.info("Successfully fetched HTML content")
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Try alternative selectors if the default one fails
+                # Try to extract standard search results
                 results = []
-                search_results = soup.find_all('div', class_='g') or soup.find_all('div', class_='tF2Cxc')
-                logger.info(f"Found {len(search_results)} potential search result elements")
+                # Updated selector for modern Google search results
+                search_results = soup.find_all('div', class_='MjjYud') or soup.find_all('div', class_='g') or soup.find_all('div', class_='tF2Cxc')
+                logger.info(f"Found {len(search_results)} potential search result elements using standard selectors")
                 
                 for g in search_results[:3]:  # Limit to top 3 results
                     title = g.find('h3') or g.find('div', role='heading')
-                    snippet = g.find('div', class_='VwiC3b') or g.find('span', class_='aCOpRe')
+                    snippet = g.find('div', class_='VwiC3b') or g.find('span', class_='aCOpRe') or g.find('div', class_='IsZvec')
                     if title and snippet:
                         results.append(f"Title: {title.text}\nSnippet: {snippet.text}\n")
                         logger.info(f"Added result - Title: {title.text}")
                 
+                # If no standard results, try to extract from featured snippet or knowledge panel
                 if not results:
-                    logger.warning("No search results found after parsing")
+                    logger.info("No standard search results found, trying featured snippet or knowledge panel")
+                    # Featured snippet (often in div.kCrYT or div.xpd)
+                    featured_snippet = soup.find('div', class_='kCrYT') or soup.find('div', class_='xpd')
+                    if featured_snippet:
+                        snippet_text = featured_snippet.get_text(strip=True)
+                        if snippet_text:
+                            results.append(f"Featured Snippet: {snippet_text}\n")
+                            logger.info(f"Added featured snippet: {snippet_text[:100]}...")
+                    
+                    # Knowledge panel (often in div.kp-wholepage or div.knowledge-panel)
+                    knowledge_panel = soup.find('div', class_='kp-wholepage') or soup.find('div', class_='knowledge-panel')
+                    if knowledge_panel:
+                        panel_text = knowledge_panel.get_text(strip=True)
+                        if panel_text:
+                            results.append(f"Knowledge Panel: {panel_text[:200]}...\n")
+                            logger.info(f"Added knowledge panel: {panel_text[:100]}...")
+                
+                # If still no results, extract raw text as a last resort
+                if not results:
+                    logger.info("No structured results found, extracting raw text as fallback")
+                    # Remove scripts and styles to clean up the text
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+                    raw_text = soup.get_text(separator=' ', strip=True)
+                    # Limit to first 500 characters to avoid overwhelming the AI
+                    if raw_text:
+                        results.append(f"Raw Text (first 500 chars): {raw_text[:500]}...\n")
+                        logger.info(f"Added raw text: {raw_text[:100]}...")
+                
+                if not results:
+                    logger.warning("No search results found after all attempts")
                     return "No search results found."
                 
                 search_result = "\n".join(results)
@@ -134,6 +166,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "Your response must always be structured with exactly two sections:\n"
         "1) 'Reason:' - Explain your chain-of-thought or reasoning step-by-step.\n"
         "2) 'Answer:' - Provide your final answer in a single, concise sentence.\n"
+        "Do not use any special formatting, code blocks, or LaTeX. Respond with plain text only."
     )
 
     headers = {
@@ -337,115 +370,4 @@ async def on_message(message: discord.Message):
         async with message.channel.typing():
             answer, reason = await get_ai_response(prompt)
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-        return
-    
-    # Handle replies to another person's message with a bot mention (works in both activated and deactivated channels)
-    if message.reference and message.reference.resolved and message.reference.resolved.author != bot.user and bot.user.mentioned_in(message):
-        referenced_msg = message.reference.resolved
-        prompt = (
-            f"Context of conversation:\n{full_context}\n\n"
-            f"The user replied to another person's message: {referenced_msg.author.name}: {referenced_msg.content}\n"
-            f"User's reply mentioning the bot: {message.content}\n"
-            "Please respond with 'Reason:' and 'Answer:' sections."
-        )
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-        return
-    
-    # Handle bot mentions (works in both activated and deactivated channels)
-    if bot.user.mentioned_in(message):
-        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-        return
-    
-    # Handle #search keyword
-    if "#search" in message.content.lower():
-        search_query = message.content.lower().split("#search", 1)[1].strip()
-        if not search_query:
-            await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
-            return
-        
-        async with message.channel.typing():
-            # Perform search for the user-provided query
-            user_search_results = await perform_google_search(search_query)
-            
-            # Check if there's an image attachment and perform OCR + search
-            ocr_search_results = ""
-            text_from_image = ""
-            has_image = False
-            for attachment in message.attachments:
-                if attachment.content_type and attachment.content_type.startswith("image/"):
-                    has_image = True
-                    text_from_image = await extract_text_from_image(attachment.url)
-                    if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                        ocr_search_results = await perform_google_search(text_from_image)
-                    else:
-                        ocr_search_results = "No relevant text extracted from the image to search."
-                    break  # Process only the first image
-            
-            # Prepare prompt based on whether an image was provided
-            if has_image:
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}'. "
-                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                    f"Additionally, an image was provided, and the following text was extracted using OCR:\n\n{text_from_image}\n\n"
-                    f"Below are the top search results for the OCR-extracted text:\n\n{ocr_search_results}\n\n"
-                    "Please process both sets of search results and provide a concise summary or answer based on the user's query and the OCR-extracted text. "
-                    "Respond with 'Reason:' and 'Answer:' sections."
-                )
-            else:
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}'. "
-                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                    "Please process the search results and provide a concise summary or answer based on the user's query. "
-                    "Respond with 'Reason:' and 'Answer:' sections."
-                )
-            
-            # Get response from DeepSeek API
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-        return
-    
-    # Handle image attachments (OCR without search)
-    for attachment in message.attachments:
-        if attachment.content_type and attachment.content_type.startswith("image/"):
-            async with message.channel.typing():
-                text_from_image = await extract_text_from_image(attachment.url)
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"Text from the image has been extracted using OCR:\n\n{text_from_image}\n\n"
-                    "If the OCR text is 'No text detected in the image,' explain in the 'Reason:' section that the image text couldn't be extracted and suggest the user provide a clearer image or type the text manually. "
-                    "Otherwise, use the extracted text to solve the problem or answer the user's request. "
-                    "Please respond with 'Reason:' and 'Answer:' sections."
-                )
-                
-                answer, reason = await get_ai_response(prompt)
-                await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-                await message.channel.send(f"Answer: {answer}")
-            return
-    
-    # Handle messages in activated channels
-    if message.channel.id in activated_channels:
-        prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
-        async with message.channel.typing():
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# RUN THE BOT
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-if __name__ == "__main__":
-    bot.run(DISCORD_BOT_TOKEN)
+            await
