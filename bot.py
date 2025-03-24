@@ -7,6 +7,8 @@ import asyncio
 import re
 import os
 import logging
+import random
+import time
 from discord.ext import commands
 from PIL import Image, ImageEnhance, ImageFilter
 import io
@@ -22,7 +24,7 @@ DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
-GOOGLE_SEARCH_URL = "https://www.perplexity.ai/search?q="  # Base URL for Google search
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q="  # Base URL for Google search
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -58,6 +60,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
+# List of user agents for rotation
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+]
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS
@@ -84,14 +93,24 @@ async def perform_google_search(query: str) -> str:
     """Performs a Google search and returns the top results as a string."""
     logger.info(f"Starting Google search for query: '{query}'")
     try:
+        # Add a small delay to avoid rate limiting
+        await asyncio.sleep(random.uniform(1, 3))
+        
         async with aiohttp.ClientSession() as session:
             encoded_query = "+".join(query.split())
             url = f"{GOOGLE_SEARCH_URL}{encoded_query}"
+            # Rotate user agent
+            user_agent = random.choice(USER_AGENTS)
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
             }
-            logger.info(f"Sending request to URL: {url}")
-            async with session.get(url, headers=headers, timeout=5) as response:
+            logger.info(f"Sending request to URL: {url} with User-Agent: {user_agent}")
+            async with session.get(url, headers=headers, timeout=10) as response:
                 logger.info(f"Received response with status: {response.status}")
                 if response.status != 200:
                     logger.error(f"Google search failed with status: {response.status}")
@@ -99,6 +118,12 @@ async def perform_google_search(query: str) -> str:
                 
                 html = await response.text()
                 logger.info("Successfully fetched HTML content")
+                
+                # Check for CAPTCHA or bot detection page
+                if "Please click here if you are not redirected within a few seconds" in html:
+                    logger.warning("Google detected the request as a bot (CAPTCHA page served)")
+                    return "Error: Google detected the request as a bot and served a CAPTCHA page. Please try again later or use a different search method."
+                
                 soup = BeautifulSoup(html, 'html.parser')
                 
                 # Try to extract standard search results
@@ -136,14 +161,20 @@ async def perform_google_search(query: str) -> str:
                 # If still no results, extract raw text as a last resort
                 if not results:
                     logger.info("No structured results found, extracting raw text as fallback")
-                    # Remove scripts and styles to clean up the text
-                    for script in soup(["script", "style"]):
-                        script.decompose()
-                    raw_text = soup.get_text(separator=' ', strip=True)
-                    # Limit to first 500 characters to avoid overwhelming the AI
+                    # Remove scripts, styles, and irrelevant sections
+                    for element in soup(["script", "style", "footer", "nav", "header"]):
+                        element.decompose()
+                    # Extract main content (try to focus on the body or main content area)
+                    main_content = soup.find('div', id='main') or soup.find('div', id='center_col') or soup
+                    raw_text = main_content.get_text(separator=' ', strip=True)
+                    # Check for CAPTCHA message in raw text
+                    if "Please click here if you are not redirected within a few seconds" in raw_text:
+                        logger.warning("Google detected the request as a bot (CAPTCHA message found in raw text)")
+                        return "Error: Google detected the request as a bot and served a CAPTCHA page. Please try again later or use a different search method."
+                    # Limit to 5000 characters
                     if raw_text:
                         results.append(f"Raw Text (first 5000 chars): {raw_text[:5000]}...\n")
-                        logger.info(f"Added raw text: {raw_text[:5000]}...")
+                        logger.info(f"Added raw text (first 1000 chars for log): {raw_text[:1000]}...")
                 
                 if not results:
                     logger.warning("No search results found after all attempts")
