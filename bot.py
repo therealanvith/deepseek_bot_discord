@@ -112,7 +112,7 @@ async def perform_search_with_duckduckgo(query: str) -> str:
                 
                 # Read the raw text and parse as JSON manually to avoid Content-Type issues
                 raw_text = await response.text()
-                logger.info(f"Raw response text (first 3000 chars): {raw_text[:3000]}...")
+                logger.info(f"Raw response text (first 10000 chars): {raw_text[:10000]}...")
                 
                 try:
                     result_json = json.loads(raw_text)
