@@ -28,12 +28,12 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 
     # List of SearXNG instances to try
-    searxng_instances = [
-        "https://search.rhscz.eu",
-        "https://searx.tuxcloud.net",
-        "https://searx.be",
-        "https://search.disroot.org",
-    ]
+searxng_instances = [
+    "https://search.rhscz.eu",
+    "https://searx.tuxcloud.net",
+    "https://searx.be",
+    "https://search.disroot.org",
+]
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
