@@ -84,10 +84,11 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         return None
 
 async def perform_search_with_duckduckgo(query: str) -> str:
-    """Performs a search using DuckDuckGo Instant Answer API."""
+    """Performs a search using DuckDuckGo Instant Answer API with enhanced logging."""
     logger.info(f"Starting DuckDuckGo search for query: '{query}'")
     
     if not query:
+        logger.error("No search query provided.")
         return "Error: Missing search query. Falling back to internal knowledge."
     
     try:
@@ -99,15 +100,25 @@ async def perform_search_with_duckduckgo(query: str) -> str:
                 "no_html": 1,  # Strips HTML from results
                 "skip_disambig": 1  # Avoids disambiguation pages
             }
+            logger.info(f"Sending request to DuckDuckGo API with URL: {url} and params: {params}")
             
             async with session.get(url, params=params) as response:
                 logger.info(f"Received DuckDuckGo response with status: {response.status}")
+                logger.info(f"Response headers: {dict(response.headers)}")
                 
                 if response.status != 200:
                     logger.error(f"DuckDuckGo search failed with status: {response.status}")
                     return "Error: Unable to perform search. Falling back to internal knowledge."
                 
-                result_json = await response.json()
+                # Read the raw text and parse as JSON manually to avoid Content-Type issues
+                raw_text = await response.text()
+                logger.info(f"Raw response text (first 500 chars): {raw_text[:500]}...")
+                
+                try:
+                    result_json = json.loads(raw_text)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to decode JSON response: {str(e)}")
+                    return f"Error: Failed to decode JSON response: {str(e)}. Falling back to internal knowledge."
                 
                 # Process the results
                 results = []
@@ -124,10 +135,11 @@ async def perform_search_with_duckduckgo(query: str) -> str:
                             results.append(f"Result {i+1}: {topic['Text']}\nURL: {topic.get('FirstURL', 'No URL provided')}\n")
                 
                 if not results:
+                    logger.info("No search results found in response.")
                     return "No search results found. Falling back to internal knowledge."
                 
                 search_result = "\n".join(results)
-                logger.info(f"Search results for query '{query}':\n{search_result[:500]}...")
+                logger.info(f"Search results for query '{query}':\n{search_result}")
                 return search_result
                 
     except Exception as e:
