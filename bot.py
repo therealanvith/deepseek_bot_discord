@@ -27,8 +27,13 @@ OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 
-# SearXNG configuration (replace with a real public instance or your own hosted instance)
-SEARXNG_INSTANCE = "https://search.rhscz.eu/"  # Replace with a real SearXNG instance URL
+    # List of SearXNG instances to try
+    searxng_instances = [
+        "https://search.rhscz.eu",
+        "https://searx.tuxcloud.net",
+        "https://searx.be",
+        "https://search.disroot.org",
+    ]
 
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
@@ -86,67 +91,80 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         logger.error(f"Error fetching referenced message: {e}")
         return None
 
-async def perform_search_with_searxng(query: str) -> str:
-    """Performs a search using a SearXNG instance with enhanced logging."""
+async def perform_search_with_searxng(query: str, max_retries: int = 3, retry_delay: int = 5) -> str:
+    """Performs a search using a SearXNG instance with fallback and rate-limit handling."""
     logger.info(f"Starting SearXNG search for query: '{query}'")
     
     if not query:
         logger.error("No search query provided.")
         return "Error: Missing search query. Falling back to internal knowledge."
+
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{SEARXNG_INSTANCE}/search"
-            params = {
-                "q": str(query),  # Ensure query is a string
-                "format": "json",
-            }
-            logger.info(f"Sending request to SearXNG API with URL: {url} and params: {params}")
+    for instance in searxng_instances:
+        for attempt in range(max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"{instance}/search"
+                    params = {
+                        "q": str(query),
+                        "format": "json",
+                    }
+                    logger.info(f"Attempt {attempt + 1}/{max_retries}: Sending request to SearXNG API with URL: {url} and params: {params}")
+                    
+                    async with session.get(url, params=params) as response:
+                        logger.info(f"Received SearXNG response with status: {response.status}")
+                        logger.info(f"Response headers: {dict(response.headers)}")
+                        
+                        if response.status == 429:
+                            logger.warning(f"Rate limit hit (429) on {instance}. Retrying after {retry_delay} seconds...")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                logger.error(f"Max retries reached for {instance} due to rate limiting.")
+                                break
+                        
+                        if response.status != 200:
+                            logger.error(f"SearXNG search failed with status: {response.status}")
+                            break
+                        
+                        raw_text = await response.text()
+                        logger.info(f"Full raw response text: {raw_text}")
+                        
+                        try:
+                            result_json = json.loads(raw_text)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to decode JSON response: {str(e)}")
+                            break
+                        
+                        results = []
+                        if "results" in result_json and isinstance(result_json["results"], list):
+                            for i, result in enumerate(result_json["results"][:3]):
+                                title = result.get("title", "No title")
+                                url = result.get("url", "No URL provided")
+                                content = result.get("content", "No description available")
+                                results.append(f"Result {i+1}: {title}\nURL: {url}\nDescription: {content}\n")
+                        
+                        if not results:
+                            logger.info("No search results found in response.")
+                            break
+                        
+                        search_result = "\n".join(results)
+                        logger.info(f"Search results for query '{query}':\n{search_result}")
+                        return search_result
             
-            async with session.get(url, params=params) as response:
-                logger.info(f"Received SearXNG response with status: {response.status}")
-                logger.info(f"Response headers: {dict(response.headers)}")
-                
-                if response.status != 200:
-                    logger.error(f"SearXNG search failed with status: {response.status}")
-                    return "Error: Unable to perform search. Falling back to internal knowledge."
-                
-                # Read the raw text and parse as JSON
-                raw_text = await response.text()
-                logger.info(f"Full raw response text: {raw_text}")
-                
-                try:
-                    result_json = json.loads(raw_text)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to decode JSON response: {str(e)}")
-                    return f"Error: Failed to decode JSON response: {str(e)}. Falling back to internal knowledge."
-                
-                # Process the results
-                results = []
-                
-                # Extract search results
-                if "results" in result_json and isinstance(result_json["results"], list):
-                    for i, result in enumerate(result_json["results"][:3]):  # Limit to top 3 results
-                        title = result.get("title", "No title")
-                        url = result.get("url", "No URL provided")
-                        content = result.get("content", "No description available")
-                        results.append(f"Result {i+1}: {title}\nURL: {url}\nDescription: {content}\n")
-                
-                if not results:
-                    logger.info("No search results found in response.")
-                    return (
-                        "No search results found for this query. "
-                        "This might be due to the SearXNG instance's limitations or the query being too specific. "
-                        "Try a different query or check a source like a news website directly."
-                    )
-                
-                search_result = "\n".join(results)
-                logger.info(f"Search results for query '{query}':\n{search_result}")
-                return search_result
-                
-    except Exception as e:
-        logger.error(f"Error during SearXNG search for query '{query}': {str(e)}")
-        return f"Error during search: {str(e)}. Falling back to internal knowledge."
+            except Exception as e:
+                logger.error(f"Error during SearXNG search with {instance} for query '{query}': {str(e)}")
+                break
+        
+        logger.info(f"Failed to get results from {instance}. Trying next instance...")
+    
+    return (
+        "No search results found after trying multiple SearXNG instances. "
+        "This might be due to rate limits, instance downtime, or the query being too specific. "
+        "Try again later or check a source like a news website directly."
+    )
+
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
