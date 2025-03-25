@@ -14,7 +14,7 @@ import io
 import pytesseract
 import numpy as np
 import cv2
-from bs4 import BeautifulSoup  # For web scraping Perplexity AI search results
+from bs4 import BeautifulSoup  # For web scraping (not used now, kept for potential future use)
 import uuid
 import time
 import json
@@ -24,7 +24,6 @@ import json
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 DISCORD_BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENROUTER_API_KEY = os.getenv('API_KEY')
-SERPAPI_KEY = os.getenv('SERPAPI_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 
@@ -62,6 +61,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
 MAX_CONTEXT_MESSAGES = 10
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -83,30 +83,28 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         logger.error(f"Error fetching referenced message: {e}")
         return None
 
-
-async def perform_search_with_serpapi(query: str) -> str:
-    """Performs a search using SerpApi instead of direct scraping."""
-    logger.info(f"Starting SerpApi search for query: '{query}'")
+async def perform_search_with_duckduckgo(query: str) -> str:
+    """Performs a search using DuckDuckGo Instant Answer API."""
+    logger.info(f"Starting DuckDuckGo search for query: '{query}'")
     
-    if not query or not SERPAPI_KEY:
-        return "Error: Missing search query or API key. Falling back to internal knowledge."
+    if not query:
+        return "Error: Missing search query. Falling back to internal knowledge."
     
     try:
         async with aiohttp.ClientSession() as session:
+            url = "https://api.duckduckgo.com/"
             params = {
-                "engine": "google",
                 "q": str(query),  # Ensure query is a string
-                "api_key": SERPAPI_KEY,
-                "num": 5  # Number of results
+                "format": "json",
+                "no_html": 1,  # Strips HTML from results
+                "skip_disambig": 1  # Avoids disambiguation pages
             }
             
-            url = "https://serpapi.com/search"
-            
-            async with session.get(url, params=params, timeout=1200) as response:
-                logger.info(f"Received SerpApi response with status: {response.status}")
+            async with session.get(url, params=params) as response:
+                logger.info(f"Received DuckDuckGo response with status: {response.status}")
                 
                 if response.status != 200:
-                    logger.error(f"SerpApi search failed with status: {response.status}")
+                    logger.error(f"DuckDuckGo search failed with status: {response.status}")
                     return "Error: Unable to perform search. Falling back to internal knowledge."
                 
                 result_json = await response.json()
@@ -114,21 +112,16 @@ async def perform_search_with_serpapi(query: str) -> str:
                 # Process the results
                 results = []
                 
-                # Extract organic results
-                if "organic_results" in result_json:
-                    for i, result in enumerate(result_json["organic_results"][:3]):
-                        title = result.get("title", "No title")
-                        link = result.get("link", "No link")
-                        snippet = result.get("snippet", "No description available")
-                        results.append(f"Result {i+1}: {title}\nURL: {link}\nDescription: {snippet}\n")
+                # Extract Abstract or Related Topics
+                abstract = result_json.get("AbstractText", "")
+                if abstract:
+                    results.append(f"Result: {abstract}\nSource: {result_json.get('AbstractURL', 'No URL provided')}\n")
                 
-                # Add knowledge graph if available
-                if "knowledge_graph" in result_json:
-                    kg = result_json["knowledge_graph"]
-                    title = kg.get("title", "")
-                    description = kg.get("description", "")
-                    if title and description:
-                        results.append(f"Knowledge Graph: {title} - {description}\n")
+                # If no abstract, try related topics
+                if not results and "RelatedTopics" in result_json:
+                    for i, topic in enumerate(result_json["RelatedTopics"][:3]):
+                        if "Text" in topic:
+                            results.append(f"Result {i+1}: {topic['Text']}\nURL: {topic.get('FirstURL', 'No URL provided')}\n")
                 
                 if not results:
                     return "No search results found. Falling back to internal knowledge."
@@ -138,9 +131,8 @@ async def perform_search_with_serpapi(query: str) -> str:
                 return search_result
                 
     except Exception as e:
-        logger.error(f"Error during SerpApi search for query '{query}': {str(e)}")
+        logger.error(f"Error during DuckDuckGo search for query '{query}': {str(e)}")
         return f"Error during search: {str(e)}. Falling back to internal knowledge."
-
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
@@ -166,7 +158,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(API_URL, headers=headers, json=data, timeout=1000) as resp:
+            async with session.post(API_URL, headers=headers, json=data) as resp:
                 resp.raise_for_status()
                 response_json = await resp.json()
                 content = response_json["choices"][0]["message"]["content"]
@@ -203,9 +195,6 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
                 return answer_part, reason_part
 
-    except asyncio.TimeoutError:
-        logger.error("AI API request timed out")
-        return "Answer: I'm having trouble responding right now. Please try again later.", "Reason: API request timed out"
     except Exception as e:
         logger.error(f"Error calling AI API: {str(e)}")
         return "Answer: I'm having trouble responding right now. Please try again later.", "Reason: API connection issue"
@@ -247,7 +236,7 @@ async def extract_text_from_image(image_url: str) -> str:
     """Extracts text from an image using OCR."""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=50) as response:
+            async with session.get(image_url) as response:
                 if response.status == 200:
                     img_data = await response.read()
                     original_img = Image.open(io.BytesIO(img_data))
@@ -285,9 +274,6 @@ async def extract_text_from_image(image_url: str) -> str:
                 else:
                     logger.error(f"Failed to fetch image, status: {response.status}")
                     return "Could not retrieve the image."
-    except asyncio.TimeoutError:
-        logger.error("Image fetch timed out")
-        return "Error: Image fetch timed out."
     except Exception as e:
         logger.error(f"OCR error: {str(e)}")
         return f"Error processing image: {str(e)}"
@@ -386,8 +372,8 @@ async def on_message(message: discord.Message):
             return
         
         async with message.channel.typing():
-            # Perform search for the user-provided query using Perplexity AI
-            user_search_results = await perform_search_with_serpapi(search_query)
+            # Perform search for the user-provided query using DuckDuckGo
+            user_search_results = await perform_search_with_duckduckgo(search_query)
             
             # Check if there's an image attachment and perform OCR + search
             ocr_search_results = ""
@@ -398,7 +384,7 @@ async def on_message(message: discord.Message):
                     has_image = True
                     text_from_image = await extract_text_from_image(attachment.url)
                     if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                        ocr_search_results = await perform_search_with_serpapi(text_from_image)
+                        ocr_search_results = await perform_search_with_duckduckgo(text_from_image)
                     else:
                         ocr_search_results = "No relevant text extracted from the image to search."
                     break  # Process only the first image
@@ -425,12 +411,12 @@ async def on_message(message: discord.Message):
                     "Respond with 'Reason:' and 'Answer:' sections."
                 )
             
-            # If search failed due to bot detection or rate limits, fall back to internal knowledge
+            # If search failed, fall back to internal knowledge
             if "Falling back to internal knowledge" in user_search_results:
                 prompt = (
                     f"Context of conversation:\n{full_context}\n\n"
                     f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}', but the search failed due to Perplexity AI's bot detection or rate limits. "
+                    f"The user has requested an internet search with the query '{search_query}', but the search failed. "
                     "Please answer the query using your internal knowledge instead. "
                     "Respond with 'Reason:' and 'Answer:' sections."
                 )
