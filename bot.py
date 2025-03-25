@@ -27,6 +27,9 @@ OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 
+# SearXNG configuration (replace with a real public instance or your own hosted instance)
+SEARXNG_INSTANCE = "https://searxng.example.com"  # Replace with a real SearXNG instance URL
+
 # Tesseract configuration
 TESSERACT_BINARY_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE', ''), 'tesseract-local', 'usr', 'bin', 'tesseract')
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_BINARY_PATH
@@ -83,9 +86,9 @@ async def fetch_referenced_message(message: discord.Message) -> discord.Message:
         logger.error(f"Error fetching referenced message: {e}")
         return None
 
-async def perform_search_with_duckduckgo(query: str) -> str:
-    """Performs a search using DuckDuckGo Instant Answer API with enhanced logging."""
-    logger.info(f"Starting DuckDuckGo search for query: '{query}'")
+async def perform_search_with_searxng(query: str) -> str:
+    """Performs a search using a SearXNG instance with enhanced logging."""
+    logger.info(f"Starting SearXNG search for query: '{query}'")
     
     if not query:
         logger.error("No search query provided.")
@@ -93,26 +96,24 @@ async def perform_search_with_duckduckgo(query: str) -> str:
     
     try:
         async with aiohttp.ClientSession() as session:
-            url = "https://api.duckduckgo.com/"
+            url = f"{SEARXNG_INSTANCE}/search"
             params = {
                 "q": str(query),  # Ensure query is a string
                 "format": "json",
-                "no_html": 1,  # Strips HTML from results
-                "skip_disambig": 1  # Avoids disambiguation pages
             }
-            logger.info(f"Sending request to DuckDuckGo API with URL: {url} and params: {params}")
+            logger.info(f"Sending request to SearXNG API with URL: {url} and params: {params}")
             
             async with session.get(url, params=params) as response:
-                logger.info(f"Received DuckDuckGo response with status: {response.status}")
+                logger.info(f"Received SearXNG response with status: {response.status}")
                 logger.info(f"Response headers: {dict(response.headers)}")
                 
                 if response.status != 200:
-                    logger.error(f"DuckDuckGo search failed with status: {response.status}")
+                    logger.error(f"SearXNG search failed with status: {response.status}")
                     return "Error: Unable to perform search. Falling back to internal knowledge."
                 
-                # Read the raw text and parse as JSON manually to avoid Content-Type issues
+                # Read the raw text and parse as JSON
                 raw_text = await response.text()
-                logger.info(f"Raw response text (first 10000 chars): {raw_text[:10000]}...")
+                logger.info(f"Full raw response text: {raw_text}")
                 
                 try:
                     result_json = json.loads(raw_text)
@@ -123,27 +124,28 @@ async def perform_search_with_duckduckgo(query: str) -> str:
                 # Process the results
                 results = []
                 
-                # Extract Abstract or Related Topics
-                abstract = result_json.get("AbstractText", "")
-                if abstract:
-                    results.append(f"Result: {abstract}\nSource: {result_json.get('AbstractURL', 'No URL provided')}\n")
-                
-                # If no abstract, try related topics
-                if not results and "RelatedTopics" in result_json:
-                    for i, topic in enumerate(result_json["RelatedTopics"][:3]):
-                        if "Text" in topic:
-                            results.append(f"Result {i+1}: {topic['Text']}\nURL: {topic.get('FirstURL', 'No URL provided')}\n")
+                # Extract search results
+                if "results" in result_json and isinstance(result_json["results"], list):
+                    for i, result in enumerate(result_json["results"][:3]):  # Limit to top 3 results
+                        title = result.get("title", "No title")
+                        url = result.get("url", "No URL provided")
+                        content = result.get("content", "No description available")
+                        results.append(f"Result {i+1}: {title}\nURL: {url}\nDescription: {content}\n")
                 
                 if not results:
                     logger.info("No search results found in response.")
-                    return "No search results found. Falling back to internal knowledge."
+                    return (
+                        "No search results found for this query. "
+                        "This might be due to the SearXNG instance's limitations or the query being too specific. "
+                        "Try a different query or check a source like a news website directly."
+                    )
                 
                 search_result = "\n".join(results)
                 logger.info(f"Search results for query '{query}':\n{search_result}")
                 return search_result
                 
     except Exception as e:
-        logger.error(f"Error during DuckDuckGo search for query '{query}': {str(e)}")
+        logger.error(f"Error during SearXNG search for query '{query}': {str(e)}")
         return f"Error during search: {str(e)}. Falling back to internal knowledge."
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
@@ -342,6 +344,13 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
     full_context = await get_conversation_context(message.channel)
     
+    # Check if the message is a trigger in a deactivated channel
+    is_triggered = (
+        bot.user.mentioned_in(message) or
+        (message.reference and message.reference.resolved and message.reference.resolved.author == bot.user) or
+        (message.reference and message.reference.resolved and message.reference.resolved.author != bot.user and bot.user.mentioned_in(message))
+    )
+    
     # Handle replies to the bot (works in both activated and deactivated channels)
     if message.reference and message.reference.resolved and message.reference.resolved.author == bot.user:
         referenced_msg = message.reference.resolved
@@ -376,89 +385,91 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Answer: {answer}")
         return
     
-    # Handle #search keyword
-    if "#search" in message.content.lower():
-        search_query = message.content.lower().split("#search", 1)[1].strip()
-        if not search_query:
-            await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
-            return
-        
-        async with message.channel.typing():
-            # Perform search for the user-provided query using DuckDuckGo
-            user_search_results = await perform_search_with_duckduckgo(search_query)
+    # Handle #search and image attachments only in activated channels or if triggered in deactivated channels
+    if message.channel.id in activated_channels or is_triggered:
+        # Handle #search keyword
+        if "#search" in message.content.lower():
+            search_query = message.content.lower().split("#search", 1)[1].strip()
+            if not search_query:
+                await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
+                return
             
-            # Check if there's an image attachment and perform OCR + search
-            ocr_search_results = ""
-            text_from_image = ""
-            has_image = False
-            for attachment in message.attachments:
-                if attachment.content_type and attachment.content_type.startswith("image/"):
-                    has_image = True
-                    text_from_image = await extract_text_from_image(attachment.url)
-                    if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                        ocr_search_results = await perform_search_with_duckduckgo(text_from_image)
-                    else:
-                        ocr_search_results = "No relevant text extracted from the image to search."
-                    break  # Process only the first image
-            
-            # Prepare prompt based on whether an image was provided
-            if has_image:
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}'. "
-                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                    f"Additionally, an image was provided, and the following text was extracted using OCR:\n\n{text_from_image}\n\n"
-                    f"Below are the top search results for the OCR-extracted text:\n\n{ocr_search_results}\n\n"
-                    "Please process both sets of search results and provide a concise summary or answer based on the user's query and the OCR-extracted text. "
-                    "Respond with 'Reason:' and 'Answer:' sections."
-                )
-            else:
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}'. "
-                    f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                    "Please process the search results and provide a concise summary or answer based on the user's query. "
-                    "Respond with 'Reason:' and 'Answer:' sections."
-                )
-            
-            # If search failed, fall back to internal knowledge
-            if "Falling back to internal knowledge" in user_search_results:
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"The user has requested an internet search with the query '{search_query}', but the search failed. "
-                    "Please answer the query using your internal knowledge instead. "
-                    "Respond with 'Reason:' and 'Answer:' sections."
-                )
-            
-            # Get response from DeepSeek API
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-            await message.channel.send(f"Answer: {answer}")
-        return
-    
-    # Handle image attachments (OCR without search)
-    for attachment in message.attachments:
-        if attachment.content_type and attachment.content_type.startswith("image/"):
             async with message.channel.typing():
-                text_from_image = await extract_text_from_image(attachment.url)
-                prompt = (
-                    f"Context of conversation:\n{full_context}\n\n"
-                    f"User's current message:\n{message.content}\n\n"
-                    f"Text from the image has been extracted using OCR:\n\n{text_from_image}\n\n"
-                    "If the OCR text is 'No text detected in the image,' explain in the 'Reason:' section that the image text couldn't be extracted and suggest the user provide a clearer image or type the text manually. "
-                    "Otherwise, use the extracted text to solve the problem or answer the user's request. "
-                    "Please respond with 'Reason:' and 'Answer:' sections."
-                )
+                # Perform search for the user-provided query using SearXNG
+                user_search_results = await perform_search_with_searxng(search_query)
                 
+                # Check if there's an image attachment and perform OCR + search
+                ocr_search_results = ""
+                text_from_image = ""
+                has_image = False
+                for attachment in message.attachments:
+                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                        has_image = True
+                        text_from_image = await extract_text_from_image(attachment.url)
+                        if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
+                            ocr_search_results = await perform_search_with_searxng(text_from_image)
+                        else:
+                            ocr_search_results = "No relevant text extracted from the image to search."
+                        break  # Process only the first image
+                
+                # Prepare prompt based on whether an image was provided
+                if has_image:
+                    prompt = (
+                        f"Context of conversation:\n{full_context}\n\n"
+                        f"User's current message:\n{message.content}\n\n"
+                        f"The user has requested an internet search with the query '{search_query}'. "
+                        f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
+                        f"Additionally, an image was provided, and the following text was extracted using OCR:\n\n{text_from_image}\n\n"
+                        f"Below are the top search results for the OCR-extracted text:\n\n{ocr_search_results}\n\n"
+                        "Please process both sets of search results and provide a concise summary or answer based on the user's query and the OCR-extracted text. "
+                        "Respond with 'Reason:' and 'Answer:' sections."
+                    )
+                else:
+                    prompt = (
+                        f"Context of conversation:\n{full_context}\n\n"
+                        f"User's current message:\n{message.content}\n\n"
+                        f"The user has requested an internet search with the query '{search_query}'. "
+                        f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
+                        "Please process the search results and provide a concise summary or answer based on the user's query. "
+                        "Respond with 'Reason:' and 'Answer:' sections."
+                    )
+                
+                # If search failed, fall back to internal knowledge
+                if "Falling back to internal knowledge" in user_search_results:
+                    prompt = (
+                        f"Context of conversation:\n{full_context}\n\n"
+                        f"User's current message:\n{message.content}\n\n"
+                        f"The user has requested an internet search with the query '{search_query}', but the search failed. "
+                        "Please answer the query using your internal knowledge instead. "
+                        "Respond with 'Reason:' and 'Answer:' sections."
+                    )
+                
+                # Get response from DeepSeek API
                 answer, reason = await get_ai_response(prompt)
                 await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
                 await message.channel.send(f"Answer: {answer}")
             return
+        
+        # Handle image attachments (OCR without search)
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                async with message.channel.typing():
+                    text_from_image = await extract_text_from_image(attachment.url)
+                    prompt = (
+                        f"Context of conversation:\n{full_context}\n\n"
+                        f"User's current message:\n{message.content}\n\n"
+                        f"Text from the image has been extracted using OCR:\n\n{text_from_image}\n\n"
+                        "If the OCR text is 'No text detected in the image,' explain in the 'Reason:' section that the image text couldn't be extracted and suggest the user provide a clearer image or type the text manually. "
+                        "Otherwise, use the extracted text to solve the problem or answer the user's request. "
+                        "Please respond with 'Reason:' and 'Answer:' sections."
+                    )
+                    
+                    answer, reason = await get_ai_response(prompt)
+                    await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+                    await message.channel.send(f"Answer: {answer}")
+                return
     
-    # Handle messages in activated channels
+    # Handle messages in activated channels (for regular messages)
     if message.channel.id in activated_channels:
         prompt = f"Context of conversation:\n{full_context}\n\nUser's current message:\n{message.content}\nPlease respond with 'Reason:' and 'Answer:' sections."
         async with message.channel.typing():
