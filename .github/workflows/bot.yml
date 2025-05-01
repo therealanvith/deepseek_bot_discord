@@ -62,15 +62,7 @@ jobs:
         run: |
           python -m venv .venv
           . .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # Ensure the virtual environment is recreated if cache is corrupt or empty
-      - name: Install dependencies if needed
-        if: steps.cache-venv.outputs.cache-hit == 'false'
-        run: |
-          python -m venv .venv
-          . .venv/bin/activate
+          python -m ensurepip --upgrade  # Ensures pip is installed in the virtual environment
           pip install --upgrade pip
           pip install -r requirements.txt
 
