@@ -62,7 +62,12 @@ jobs:
         run: |
           python -m venv .venv
           . .venv/bin/activate
+          # Debugging: List files in the .venv/bin directory
+          ls -l .venv/bin/
+          # Ensure pip is installed
           python -m ensurepip --upgrade  # Ensures pip is installed in the virtual environment
+          # Check if pip is installed
+          pip --version  # Verify pip installation
           pip install --upgrade pip
           pip install -r requirements.txt
 
