@@ -60,14 +60,23 @@ jobs:
       - name: Set up virtual environment if cache miss
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
+          # Delete the existing virtual environment if it exists
+          rm -rf .venv
+
+          # Create a fresh virtual environment
           python -m venv .venv
+
+          # Activate the virtual environment
           . .venv/bin/activate
-          # Debugging: List files in the .venv/bin directory
-          ls -l .venv/bin/
-          # Ensure pip is installed
-          python -m ensurepip --upgrade  # Ensures pip is installed in the virtual environment
-          # Check if pip is installed
-          pip --version  # Verify pip installation
+
+          # Force install pip using get-pip.py
+          curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+          python get-pip.py --force-reinstall
+          
+          # Verify pip installation
+          pip --version
+
+          # Upgrade pip and install dependencies
           pip install --upgrade pip
           pip install -r requirements.txt
 
