@@ -50,15 +50,13 @@ jobs:
           path: tesseract-local
           key: ${{ runner.os }}-tesseract-v2
 
-      - name: Cache virtual environment
-        id: cache-venv
+      - name: Cache pip dependencies
         uses: actions/cache@v3
         with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
 
-      - name: Set up virtual environment if cache miss
-        if: steps.cache-venv.outputs.cache-hit != 'true'
+      - name: Set up virtual environment
         run: |
           # Delete the existing virtual environment if it exists
           rm -rf .venv
@@ -100,12 +98,6 @@ jobs:
         with:
           path: tesseract-local
           key: ${{ runner.os }}-tesseract-v2
-
-      - name: Restore virtual environment cache
-        uses: actions/cache/restore@v3
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
 
       - name: Debug Python packages (confirm discord.py installation)
         run: |
