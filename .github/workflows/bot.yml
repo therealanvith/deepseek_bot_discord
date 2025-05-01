@@ -35,7 +35,6 @@ jobs:
           cd tesseract-local/usr/lib/x86_64-linux-gnu
           echo "Listing extracted libraries:"
           ls -l libgif*
-          # Check for libgif.so.7.0.1 and create libgif.so.7 symlink if missing
           if [ -f "libgif.so.7.0.1" ] && [ ! -e "libgif.so.7" ]; then
             ln -sf libgif.so.7.0.1 libgif.so.7
             echo "Created symlink: libgif.so.7 -> libgif.so.7.0.1"
@@ -93,11 +92,15 @@ jobs:
           path: .venv
           key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
 
+      - name: Debug Python packages (confirm discord.py installation)
+        run: |
+          . .venv/bin/activate
+          pip list
+
       - name: Check cached libraries
         run: |
           echo "Listing cached libraries in bot job:"
           ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/libgif*
-          # Verify LD_LIBRARY_PATH contents
           echo "LD_LIBRARY_PATH contents:"
           ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/
 
@@ -117,4 +120,5 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
-          .venv/bin/python bot.py
+          . .venv/bin/activate
+          python bot.py
