@@ -79,6 +79,12 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache virtual environment
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
   bot:
     needs: setup
     runs-on: ubuntu-latest
@@ -100,9 +106,24 @@ jobs:
           path: tesseract-local
           key: ${{ runner.os }}-tesseract-v2
 
-      - name: Debug Python packages (confirm discord.py installation)
+      - name: Restore virtual environment cache
+        uses: actions/cache/restore@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+
+      - name: Set up virtual environment
         run: |
-          . .venv/bin/activate
+          # Recreate the virtual environment if cache wasn't restored
+          if [ ! -d ".venv" ]; then
+            python -m venv .venv
+            . .venv/bin/activate
+            pip install -r requirements.txt
+          else
+            . .venv/bin/activate
+          fi
+
+          # Verify packages
           pip list
 
       - name: Check cached libraries
@@ -113,17 +134,16 @@ jobs:
           ls -l $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu/
 
       - name: Set environment variables for Tesseract
-        env:
-          TESSDATA_PREFIX: ${{ steps.set_tesseract_data_dir.outputs.TESSDATA_DIR }}
-          LD_LIBRARY_PATH: $GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
         run: |
           TESSDATA_DIR=$(find $GITHUB_WORKSPACE/tesseract-local -type d -name tessdata)
           echo "TESSDATA_PREFIX=$TESSDATA_DIR" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH set to: $LD_LIBRARY_PATH"
 
       - name: Verify Tesseract
-        run: tesseract --version
+        run: |
+          export LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+          $GITHUB_WORKSPACE/tesseract-local/usr/bin/tesseract --version
 
       - name: Run Discord bot
         env:
@@ -131,4 +151,5 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           . .venv/bin/activate
+          export LD_LIBRARY_PATH=$GITHUB_WORKSPACE/tesseract-local/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
           python bot.py
