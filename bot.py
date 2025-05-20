@@ -119,7 +119,7 @@ async def perform_search_with_searxng(query: str, max_retries: int = 3, retry_de
                     
                     logger.info(f"Attempt {attempt + 1}/{max_retries}: Trying {instance}")
                     
-                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    async with session.get(url, params=params) as response:
                         # Handle rate limiting
                         if response.status == 429:
                             wait_time = int(response.headers.get('Retry-After', retry_delay))
@@ -155,15 +155,11 @@ async def perform_search_with_searxng(query: str, max_retries: int = 3, retry_de
                         
                         return "\n".join(results) if results else "No results found."
             
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout on {instance}, attempt {attempt + 1}")
+            except Exception as e:
+                logger.error(f"Error with {instance}: {str(e)}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                 continue
-                
-            except Exception as e:
-                logger.error(f"Error with {instance}: {str(e)}")
-                break
     
     return "Could not get search results from any SearXNG instance. The instances may be down or rate-limiting us."
 
