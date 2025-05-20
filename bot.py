@@ -27,12 +27,15 @@ OPENROUTER_API_KEY = os.getenv('API_KEY')
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "deepseek/deepseek-r1:free"  # Updated model name
 
-    # List of SearXNG instances to try
+# List of SearXNG instances to try
 searxng_instances = [
+    "https://search.brave.com",
+    "https://searx.space",
+    "https://search.disroot.org",
+    "https://searx.nixnet.services",
     "https://search.rhscz.eu",
     "https://searx.tuxcloud.net",
     "https://searx.be",
-    "https://search.disroot.org",
 ]
 
 # Tesseract configuration
@@ -99,72 +102,70 @@ async def perform_search_with_searxng(query: str, max_retries: int = 3, retry_de
         logger.error("No search query provided.")
         return "Error: Missing search query. Falling back to internal knowledge."
 
+    # Randomize instance order to distribute load
+    instances = random.sample(searxng_instances, len(searxng_instances))
     
-    for instance in searxng_instances:
+    for instance in instances:
         for attempt in range(max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
                     url = f"{instance}/search"
                     params = {
-                        "q": str(query),
+                        "q": query,
                         "format": "json",
+                        "language": "en",
+                        "safesearch": "1"
                     }
-                    logger.info(f"Attempt {attempt + 1}/{max_retries}: Sending request to SearXNG API with URL: {url} and params: {params}")
                     
-                    async with session.get(url, params=params) as response:
-                        logger.info(f"Received SearXNG response with status: {response.status}")
-                        logger.info(f"Response headers: {dict(response.headers)}")
-                        
+                    logger.info(f"Attempt {attempt + 1}/{max_retries}: Trying {instance}")
+                    
+                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        # Handle rate limiting
                         if response.status == 429:
-                            logger.warning(f"Rate limit hit (429) on {instance}. Retrying after {retry_delay} seconds...")
-                            if attempt < max_retries - 1:
-                                await asyncio.sleep(retry_delay)
-                                continue
-                            else:
-                                logger.error(f"Max retries reached for {instance} due to rate limiting.")
-                                break
-                        
+                            wait_time = int(response.headers.get('Retry-After', retry_delay))
+                            logger.warning(f"Rate limited on {instance}. Waiting {wait_time} seconds...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                            
                         if response.status != 200:
-                            logger.error(f"SearXNG search failed with status: {response.status}")
+                            logger.error(f"Bad status from {instance}: {response.status}")
                             break
-                        
-                        raw_text = await response.text()
-                        logger.info(f"Full raw response text: {raw_text}")
-                        
+                            
                         try:
-                            result_json = json.loads(raw_text)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to decode JSON response: {str(e)}")
+                            data = await response.json()
+                        except Exception as e:
+                            logger.error(f"JSON decode error from {instance}: {str(e)}")
                             break
-                        
+                            
+                        if not data.get('results'):
+                            logger.info(f"No results from {instance}")
+                            break
+                            
+                        # Format the top 3 results
                         results = []
-                        if "results" in result_json and isinstance(result_json["results"], list):
-                            for i, result in enumerate(result_json["results"][:3]):
-                                title = result.get("title", "No title")
-                                url = result.get("url", "No URL provided")
-                                content = result.get("content", "No description available")
-                                results.append(f"Result {i+1}: {title}\nURL: {url}\nDescription: {content}\n")
+                        for i, result in enumerate(data['results'][:3]):
+                            title = result.get('title', 'No title')
+                            url = result.get('url', 'No URL')
+                            content = result.get('content', 'No description')
+                            results.append(
+                                f"🔍 **Result {i+1}**: {title}\n"
+                                f"🔗 {url}\n"
+                                f"📝 {content}\n"
+                            )
                         
-                        if not results:
-                            logger.info("No search results found in response.")
-                            break
-                        
-                        search_result = "\n".join(results)
-                        logger.info(f"Search results for query '{query}':\n{search_result}")
-                        return search_result
+                        return "\n".join(results) if results else "No results found."
             
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout on {instance}, attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                continue
+                
             except Exception as e:
-                logger.error(f"Error during SearXNG search with {instance} for query '{query}': {str(e)}")
+                logger.error(f"Error with {instance}: {str(e)}")
                 break
-        
-        logger.info(f"Failed to get results from {instance}. Trying next instance...")
     
-    return (
-        "No search results found after trying multiple SearXNG instances. "
-        "This might be due to rate limits, instance downtime, or the query being too specific. "
-        "Try again later or check a source like a news website directly."
-    )
-
+    return "Could not get search results from any SearXNG instance. The instances may be down or rate-limiting us."
 
 async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     """Fetches a response from the DeepSeek API and formats it with Reason: and Answer: sections."""
@@ -409,63 +410,42 @@ async def on_message(message: discord.Message):
         if "#search" in message.content.lower():
             search_query = message.content.lower().split("#search", 1)[1].strip()
             if not search_query:
-                await message.channel.send("Please provide a search query after #search, e.g., #search python tutorial")
+                await message.channel.send("Please provide a search query after #search, e.g., `#search python tutorial`")
                 return
             
             async with message.channel.typing():
-                # Perform search for the user-provided query using SearXNG
-                user_search_results = await perform_search_with_searxng(search_query)
-                
-                # Check if there's an image attachment and perform OCR + search
-                ocr_search_results = ""
-                text_from_image = ""
-                has_image = False
-                for attachment in message.attachments:
-                    if attachment.content_type and attachment.content_type.startswith("image/"):
-                        has_image = True
-                        text_from_image = await extract_text_from_image(attachment.url)
-                        if text_from_image and text_from_image != "No text detected in the image." and not text_from_image.startswith("Error"):
-                            ocr_search_results = await perform_search_with_searxng(text_from_image)
-                        else:
-                            ocr_search_results = "No relevant text extracted from the image to search."
-                        break  # Process only the first image
-                
-                # Prepare prompt based on whether an image was provided
-                if has_image:
-                    prompt = (
-                        f"Context of conversation:\n{full_context}\n\n"
-                        f"User's current message:\n{message.content}\n\n"
-                        f"The user has requested an internet search with the query '{search_query}'. "
-                        f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                        f"Additionally, an image was provided, and the following text was extracted using OCR:\n\n{text_from_image}\n\n"
-                        f"Below are the top search results for the OCR-extracted text:\n\n{ocr_search_results}\n\n"
-                        "Please process both sets of search results and provide a concise summary or answer based on the user's query and the OCR-extracted text. "
-                        "Respond with 'Reason:' and 'Answer:' sections."
-                    )
-                else:
-                    prompt = (
-                        f"Context of conversation:\n{full_context}\n\n"
-                        f"User's current message:\n{message.content}\n\n"
-                        f"The user has requested an internet search with the query '{search_query}'. "
-                        f"Below are the top search results for the user's query:\n\n{user_search_results}\n\n"
-                        "Please process the search results and provide a concise summary or answer based on the user's query. "
-                        "Respond with 'Reason:' and 'Answer:' sections."
-                    )
-                
-                # If search failed, fall back to internal knowledge
-                if "Falling back to internal knowledge" in user_search_results:
-                    prompt = (
-                        f"Context of conversation:\n{full_context}\n\n"
-                        f"User's current message:\n{message.content}\n\n"
-                        f"The user has requested an internet search with the query '{search_query}', but the search failed. "
-                        "Please answer the query using your internal knowledge instead. "
-                        "Respond with 'Reason:' and 'Answer:' sections."
-                    )
-                
-                # Get response from DeepSeek API
-                answer, reason = await get_ai_response(prompt)
-                await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-                await message.channel.send(f"Answer: {answer}")
+                try:
+                    # Perform the search
+                    search_results = await perform_search_with_searxng(search_query)
+                    
+                    # Check if we got actual results
+                    if "Could not get search results" in search_results:
+                        # Fallback to just using the AI
+                        prompt = (
+                            f"User requested a search for: {search_query}\n"
+                            "But we couldn't get live search results.\n"
+                            "Please answer using your knowledge.\n"
+                            "Respond with 'Reason:' and 'Answer:' sections."
+                        )
+                    else:
+                        # Combine search results with AI processing
+                        prompt = (
+                            f"Context of conversation:\n{full_context}\n\n"
+                            f"User requested a search for: {search_query}\n\n"
+                            f"Here are the search results:\n{search_results}\n\n"
+                            "Please analyze these results and provide a concise answer.\n"
+                            "Respond with 'Reason:' and 'Answer:' sections."
+                        )
+                    
+                    answer, reason = await get_ai_response(prompt)
+                    
+                    # Send the response in chunks if too long
+                    for chunk in chunk_text(f"Reason: {reason}\n\nAnswer: {answer}"):
+                        await message.channel.send(chunk)
+                        
+                except Exception as e:
+                    logger.error(f"Search error: {str(e)}")
+                    await message.channel.send("⚠️ Couldn't complete your search right now. This might be due to high load on search services. You can try again later or ask your question directly.")
             return
         
         # Handle image attachments (OCR without search)
