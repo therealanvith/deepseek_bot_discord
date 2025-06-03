@@ -184,10 +184,11 @@ async def on_message(message: discord.Message):
 
     full_context = await get_conversation_context(message.channel)
 
-    # Handle image attachments OCR first
+    # PRIORITY: Handle images with OCR if in activated channel
     if message.channel.id in activated_channels and message.attachments:
-        for attachment in message.attachments:
-            if attachment.content_type and attachment.content_type.startswith("image/"):
+        image_attachments = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
+        if image_attachments:
+            for attachment in image_attachments:
                 async with message.channel.typing():
                     text = await extract_text_from_image(attachment.url)
                     logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text}")
@@ -200,9 +201,9 @@ async def on_message(message: discord.Message):
                     answer, reason = await get_ai_response(prompt)
                     await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
                     await message.channel.send(f"Answer: {answer}")
-                return  # Don't process other handlers
+            return  # Exit after OCR handling so AI API is not called again below
 
-    # Handle mention-based AI queries
+    # If bot mentioned, answer directly
     if bot.user.mentioned_in(message):
         prompt = f"{full_context}\n\nUser said: {message.content}"
         async with message.channel.typing():
@@ -211,7 +212,7 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Answer: {answer}")
         return
 
-    # Normal message processing for activated channels
+    # Normal chat in activated channels
     if message.channel.id in activated_channels:
         prompt = f"{full_context}\n\nUser said: {message.content}"
         async with message.channel.typing():
