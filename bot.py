@@ -62,7 +62,8 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "Respond in two sections:\n"
         "1) Reason: (step-by-step reasoning)\n"
         "2) Answer: (concise final answer)"
-        "dont use any kind of text formmatting"
+        "strictly do not use anything to format the text by using symbols like * | or ~ that messes up the full purpose of the bot"
+        "if ocr is aksed , the ocr will be done and be transferred to you"
     )
 
     headers = {
