@@ -62,6 +62,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "Respond in two sections:\n"
         "1) Reason: (step-by-step reasoning)\n"
         "2) Answer: (concise final answer)"
+        "dont use any kind of text formmatting"
     )
 
     headers = {
