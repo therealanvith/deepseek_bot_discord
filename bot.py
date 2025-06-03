@@ -54,26 +54,35 @@ MAX_CONTEXT_MESSAGES = 10
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-async def get_ai_response(user_prompt: str, ocr_text: str = None) -> tuple[str, str]:
+async def get_ai_response(user_prompt: str, ocr_text: str = None, is_reply: bool = False, reference_content: str = None) -> tuple[str, str]:
     system_instructions = (
         "You are a helpful Discord bot that solves problems and answers questions. "
         "When given OCR text, analyze it carefully. "
-        "Respond in two sections:\n"
-        "1) Reason: (step-by-step reasoning)\n"
-        "2) Answer: (concise final answer)\n"
-        "Don't use formatting symbols like * | or ~"
+        "Respond in exactly two sections:\n"
+        "Reason: (detailed step-by-step reasoning)\n"
+        "Answer: (concise final answer)\n"
+        "Do not use any formatting symbols like * | ~ \n"
+        "Do not put numbers before sections\n"
+        "Do not skip any part of the response\n"
+        "Keep all content intact and unmodified"
     )
 
     messages = [
         {"role": "system", "content": system_instructions},
-        {"role": "user", "content": f"USER PROMPT: {user_prompt}"}
     ]
     
-    if ocr_text and ocr_text != "No text detected in the image." and not ocr_text.startswith("Error:"):
+    if is_reply and reference_content:
         messages.append({
             "role": "user", 
-            "content": f"OCR TEXT FROM IMAGE:\n{ocr_text}"
+            "content": f"Replying to this message: {reference_content}\n\nUser reply: {user_prompt}"
         })
+    elif ocr_text and ocr_text != "No text detected in the image." and not ocr_text.startswith("Error:"):
+        messages.extend([
+            {"role": "user", "content": f"User message: {user_prompt}"},
+            {"role": "user", "content": f"OCR text from image:\n{ocr_text}"}
+        ])
+    else:
+        messages.append({"role": "user", "content": user_prompt})
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -98,7 +107,7 @@ async def get_ai_response(user_prompt: str, ocr_text: str = None) -> tuple[str, 
                     answer = content.split("Answer:")[-1].strip()
                 else:
                     reason = content
-                    answer = "Answer: Formatting issue."
+                    answer = "Answer: Response formatting issue."
 
                 return answer, reason
     except Exception as e:
@@ -134,9 +143,9 @@ async def extract_text_from_image(image_url: str) -> str:
         logger.error(f"OCR failed: {str(e)}", exc_info=True)
         return f"Error: {str(e)}"
 
-async def get_conversation_context(channel: discord.TextChannel) -> str:
+async def get_conversation_context(channel: discord.TextChannel, reference: discord.MessageReference = None) -> str:
     full_context = ""
-    async for msg in channel.history(limit=MAX_CONTEXT_MESSAGES):
+    async for msg in channel.history(limit=MAX_CONTEXT_MESSAGES, before=reference.message_id if reference else None):
         full_context = f"{msg.author.name}: {msg.content}\n" + full_context
     logger.info(f"Conversation context: {full_context}")
     return full_context
@@ -178,21 +187,46 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-    # Handle images in activated channels
+    # Condition 1: Always respond if bot is mentioned (@bot)
+    if bot.user.mentioned_in(message):
+        logger.info("Bot was mentioned, processing message")
+        async with message.channel.typing():
+            context = await get_conversation_context(message.channel)
+            prompt = f"{context}\nUser mentioned you and said: {message.content}"
+            
+            answer, reason = await get_ai_response(prompt)
+            await message.channel.send(f"Reason: {reason}", reference=message)
+            await message.channel.send(f"Answer: {answer}")
+        return
+
+    # Condition 2: Respond to replies to bot's messages
+    if message.reference and message.reference.resolved and message.reference.resolved.author == bot.user:
+        logger.info("User replied to bot's message")
+        async with message.channel.typing():
+            context = await get_conversation_context(message.channel, message.reference)
+            prompt = f"{context}\nUser replied to your message with: {message.content}"
+            
+            answer, reason = await get_ai_response(
+                prompt,
+                is_reply=True,
+                reference_content=message.reference.resolved.content
+            )
+            await message.channel.send(f"Reason: {reason}", reference=message)
+            await message.channel.send(f"Answer: {answer}")
+        return
+
+    # Condition 3: Handle images with OCR (in activated channels)
     if message.channel.id in activated_channels and message.attachments:
-        image_attachments = [
-            att for att in message.attachments 
-            if att.content_type and att.content_type.startswith("image/")
-        ]
+        image_attachments = [att for att in message.attachments 
+                           if att.content_type and att.content_type.startswith("image/")]
         
         if image_attachments:
-            logger.info(f"Processing {len(image_attachments)} image(s)")
+            logger.info(f"Processing {len(image_attachments)} image attachments")
             for attachment in image_attachments:
                 async with message.channel.typing():
-                    # Step 1: Extract text from image
                     extracted_text = await extract_text_from_image(attachment.url)
+                    logger.info(f"Extracted text: {extracted_text[:200]}...")
                     
-                    # Step 2: Handle OCR errors
                     if extracted_text == "No text detected in the image.":
                         await message.channel.send("Answer: No text found in the image.")
                         continue
@@ -200,28 +234,26 @@ async def on_message(message: discord.Message):
                         await message.channel.send(f"Answer: {extracted_text}")
                         continue
                     
-                    # Step 3: Get context and send to AI
                     context = await get_conversation_context(message.channel)
-                    prompt = f"{context}\nUser asked: {message.content}"
+                    user_message = f"{message.content}\n\nHere is an image with text to analyze:"
                     
                     answer, reason = await get_ai_response(
-                        user_prompt=prompt,
+                        user_message,
                         ocr_text=extracted_text
                     )
                     
-                    # Step 4: Send responses
-                    await message.channel.send(f"Reason: {reason}")
+                    await message.channel.send(f"Reason: {reason}", reference=message)
                     await message.channel.send(f"Answer: {answer}")
             return
 
-    # Handle regular messages in activated channels
+    # Condition 4: Normal chat in activated channels
     if message.channel.id in activated_channels:
         async with message.channel.typing():
             context = await get_conversation_context(message.channel)
             prompt = f"{context}\nUser said: {message.content}"
             
             answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}")
+            await message.channel.send(f"Reason: {reason}", reference=message)
             await message.channel.send(f"Answer: {answer}")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
