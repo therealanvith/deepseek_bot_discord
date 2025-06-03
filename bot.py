@@ -61,9 +61,9 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "You are a helpful Discord bot that solves problems and answers questions. "
         "Respond in two sections:\n"
         "1) Reason: (step-by-step reasoning)\n"
-        "2) Answer: (concise final answer)"
-        "strictly do not use anything to format the text by using symbols like * | or ~ that messes up the full purpose of the bot"
-        "if ocr is aksed , the ocr will be done and be transferred to you"
+        "2) Answer: (concise final answer)\n"
+        "strictly do not use anything to format the text by using symbols like * | or ~ that messes up the full purpose of the bot\n"
+        "if ocr is asked, the ocr will be done and be transferred to you"
     )
 
     headers = {
@@ -81,6 +81,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(API_URL, headers=headers, json=data) as resp:
+                logger.info(f"AI API request sent to {API_URL}")
                 resp.raise_for_status()
                 response_json = await resp.json()
                 content = response_json["choices"][0]["message"]["content"]
@@ -98,34 +99,38 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
 
                 return answer, reason
     except Exception as e:
-        logger.error(f"AI API error: {e}")
+        logger.error(f"AI API error: {e}", exc_info=True)
         return "Answer: AI error.", "Reason: API issue"
 
 def preprocess_image(img: Image.Image) -> list:
     try:
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        contrasted = cv2.convertScaleAbs(gray, alpha=2.0, beta=10)
-        _, binary = cv2.threshold(contrasted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return [Image.fromarray(binary)]
+        logger.info("Image converted to grayscale")
+        # Simplified preprocessing: use grayscale only
+        return [Image.fromarray(gray)]
     except Exception as e:
-        logger.error(f"Image preprocessing error: {e}")
+        logger.error(f"Image preprocessing error: {e}", exc_info=True)
         return [img]
 
 async def extract_text_from_image(image_url: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
+            logger.info(f"Fetching image from {image_url}")
             async with session.get(image_url) as response:
+                logger.info(f"Image fetch response status: {response.status}")
                 if response.status == 200:
                     img_data = await response.read()
                     logger.info(f"Image data fetched: {len(img_data)} bytes")
                     original_img = Image.open(io.BytesIO(img_data))
+                    logger.info("Image opened successfully")
                     processed_images = preprocess_image(original_img)
+                    logger.info(f"Processed {len(processed_images)} images")
                     best_text = ""
 
                     for img in processed_images:
                         text = pytesseract.image_to_string(img, config=TESSERACT_CONFIG)
-                        logger.info(f"OCR attempt text length: {len(text.strip())}")
+                        logger.info(f"OCR extracted text: {text[:100]}...")  # Log first 100 chars
                         if text.strip():
                             best_text = text
                             break
@@ -135,13 +140,14 @@ async def extract_text_from_image(image_url: str) -> str:
                     logger.error(f"Image fetch failed, status: {response.status}")
                     return "Could not retrieve the image."
     except Exception as e:
-        logger.error(f"OCR error: {e}")
-        return f"Error: {e}"
+        logger.error(f"OCR error: {str(e)}", exc_info=True)
+        return f"Error: {str(e)}"
 
 async def get_conversation_context(channel: discord.TextChannel, limit: int = MAX_CONTEXT_MESSAGES) -> str:
     full_context = ""
     async for msg in channel.history(limit=limit):
         full_context = f"{msg.author.name}: {msg.content}\n" + full_context
+    logger.info(f"Conversation context fetched: {full_context[:100]}...")  # Log first 100 chars
     return full_context
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -187,12 +193,15 @@ async def on_message(message: discord.Message):
     # PRIORITY: Handle images with OCR if in activated channel
     if message.channel.id in activated_channels and message.attachments:
         image_attachments = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
+        logger.info(f"Filtered image attachments: {len(image_attachments)}")
         if image_attachments:
             for attachment in image_attachments:
                 async with message.channel.typing():
                     text = await extract_text_from_image(attachment.url)
-                    logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text}")
-
+                    logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text[:100]}...")
+                    if text == "No text detected in the image." or text.startswith("Error:"):
+                        await message.channel.send(f"Answer: {text}")
+                        return
                     prompt = (
                         f"{full_context}\n\n"
                         f"Message: {message.content}\n\n"
@@ -201,7 +210,7 @@ async def on_message(message: discord.Message):
                     answer, reason = await get_ai_response(prompt)
                     await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
                     await message.channel.send(f"Answer: {answer}")
-            return  # Exit after OCR handling so AI API is not called again below
+            return  # Exit after OCR handling
 
     # If bot mentioned, answer directly
     if bot.user.mentioned_in(message):
