@@ -118,12 +118,14 @@ async def extract_text_from_image(image_url: str) -> str:
             async with session.get(image_url) as response:
                 if response.status == 200:
                     img_data = await response.read()
+                    logger.info(f"Image data fetched: {len(img_data)} bytes")
                     original_img = Image.open(io.BytesIO(img_data))
                     processed_images = preprocess_image(original_img)
                     best_text = ""
 
                     for img in processed_images:
                         text = pytesseract.image_to_string(img, config=TESSERACT_CONFIG)
+                        logger.info(f"OCR attempt text length: {len(text.strip())}")
                         if text.strip():
                             best_text = text
                             break
@@ -173,7 +175,6 @@ async def on_message(message: discord.Message):
 
     logger.info(f"Received message from {message.author.name}: {message.content}")
 
-    # Log attachments presence and details
     if message.attachments:
         logger.info(f"Message has {len(message.attachments)} attachment(s).")
         for i, attachment in enumerate(message.attachments, start=1):
@@ -183,6 +184,25 @@ async def on_message(message: discord.Message):
 
     full_context = await get_conversation_context(message.channel)
 
+    # Handle image attachments OCR first
+    if message.channel.id in activated_channels and message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                async with message.channel.typing():
+                    text = await extract_text_from_image(attachment.url)
+                    logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text}")
+
+                    prompt = (
+                        f"{full_context}\n\n"
+                        f"Message: {message.content}\n\n"
+                        f"Extracted text: {text}"
+                    )
+                    answer, reason = await get_ai_response(prompt)
+                    await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
+                    await message.channel.send(f"Answer: {answer}")
+                return  # Don't process other handlers
+
+    # Handle mention-based AI queries
     if bot.user.mentioned_in(message):
         prompt = f"{full_context}\n\nUser said: {message.content}"
         async with message.channel.typing():
@@ -191,23 +211,8 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"Answer: {answer}")
         return
 
+    # Normal message processing for activated channels
     if message.channel.id in activated_channels:
-        if message.attachments:
-            for attachment in message.attachments:
-                if attachment.content_type and attachment.content_type.startswith("image/"):
-                    async with message.channel.typing():
-                        text = await extract_text_from_image(attachment.url)
-                        logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text}")
-                        prompt = (
-                            f"{full_context}\n\n"
-                            f"Message: {message.content}\n\n"
-                            f"Extracted text: {text}"
-                        )
-                        answer, reason = await get_ai_response(prompt)
-                        await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
-                        await message.channel.send(f"Answer: {answer}")
-                    return
-
         prompt = f"{full_context}\n\nUser said: {message.content}"
         async with message.channel.typing():
             answer, reason = await get_ai_response(prompt)
