@@ -62,6 +62,7 @@ async def get_ai_response(user_prompt: str) -> tuple[str, str]:
         "Respond in two sections:\n"
         "1) Reason: (step-by-step reasoning)\n"
         "2) Answer: (concise final answer)"
+        "never skip the sections"
         "strictly do not use anything to format the text by using symbols like * | or ~ that messes up the full purpose of the bot"
         "if ocr is aksed , the ocr will be done and be transferred to you"
     )
@@ -163,15 +164,18 @@ async def ping(ctx):
 # BOT EVENT HANDLERS
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @bot.event
-async def on_ready():
-    logger.info(f"Logged in as {bot.user}")
-
-@bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user or message.author.bot:
         return
 
     logger.info(f"Received message from {message.author.name}: {message.content}")
+
+    # Log attachments presence
+    if message.attachments:
+        logger.info(f"Message has {len(message.attachments)} attachment(s).")
+        for i, attachment in enumerate(message.attachments, start=1):
+            logger.info(f"Attachment {i}: filename={attachment.filename}, content_type={attachment.content_type}, url={attachment.url}")
+
     await bot.process_commands(message)
 
     full_context = await get_conversation_context(message.channel)
@@ -190,6 +194,7 @@ async def on_message(message: discord.Message):
                 if attachment.content_type and attachment.content_type.startswith("image/"):
                     async with message.channel.typing():
                         text = await extract_text_from_image(attachment.url)
+                        logger.info(f"OCR extracted text from attachment '{attachment.filename}': {text}")
                         prompt = (
                             f"{full_context}\n\n"
                             f"Message: {message.content}\n\n"
@@ -205,7 +210,7 @@ async def on_message(message: discord.Message):
             answer, reason = await get_ai_response(prompt)
             await message.channel.send(f"Reason: {reason}", reference=message, mention_author=False)
             await message.channel.send(f"Answer: {answer}")
-
+            
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # RUN THE BOT
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
