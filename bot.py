@@ -191,12 +191,41 @@ async def on_message(message: discord.Message):
     if bot.user.mentioned_in(message):
         logger.info("Bot was mentioned, processing message")
         async with message.channel.typing():
-            context = await get_conversation_context(message.channel)
-            prompt = f"{context}\nUser mentioned you and said: {message.content}"
+            # Check for image attachments
+            image_attachments = [att for att in message.attachments 
+                               if att.content_type and att.content_type.startswith("image/")]
             
-            answer, reason = await get_ai_response(prompt)
-            await message.channel.send(f"Reason: {reason}", reference=message)
-            await message.channel.send(f"Answer: {answer}")
+            if image_attachments:
+                logger.info(f"Processing {len(image_attachments)} image attachments")
+                for attachment in image_attachments:
+                    extracted_text = await extract_text_from_image(attachment.url)
+                    logger.info(f"Extracted text: {extracted_text[:200]}...")
+                    
+                    if extracted_text == "No text detected in the image.":
+                        await message.channel.send("Answer: No text found in the image.")
+                        continue
+                    elif extracted_text.startswith("Error:"):
+                        await message.channel.send(f"Answer: {extracted_text}")
+                        continue
+                    
+                    context = await get_conversation_context(message.channel)
+                    user_message = f"{context}\nUser mentioned you and said: {message.content}\nHere is an image with text to analyze:"
+                    
+                    answer, reason = await get_ai_response(
+                        user_message,
+                        ocr_text=extracted_text
+                    )
+                    
+                    await message.channel.send(f"Reason: {reason}", reference=message)
+                    await message.channel.send(f"Answer: {answer}")
+            else:
+                # Handle text-only mentions
+                context = await get_conversation_context(message.channel)
+                prompt = f"{context}\nUser mentioned you and said: {message.content}"
+                
+                answer, reason = await get_ai_response(prompt)
+                await message.channel.send(f"Reason: {reason}", reference=message)
+                await message.channel.send(f"Answer: {answer}")
         return
 
     # Condition 2: Respond to replies to bot's messages
@@ -235,7 +264,7 @@ async def on_message(message: discord.Message):
                         continue
                     
                     context = await get_conversation_context(message.channel)
-                    user_message = f"{message.content}\n\nHere is an image with text to analyze:"
+                    user_message = f"{context}\n{message.content}\nHere is an image with text to analyze:"
                     
                     answer, reason = await get_ai_response(
                         user_message,
