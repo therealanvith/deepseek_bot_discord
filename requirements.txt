@@ -15,6 +15,3 @@ numpy>=1.26.4
 
 # Advanced image processing with OpenCV
 opencv-python>=4.9.0
-
-# Web scraping for Google search results
-beautifulsoup4>=4.12.3

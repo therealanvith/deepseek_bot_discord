@@ -56,8 +56,8 @@ MAX_CONTEXT_MESSAGES = 10
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 async def get_ai_response(user_prompt: str, ocr_text: str = None, is_reply: bool = False, reference_content: str = None) -> tuple[str, str]:
     system_instructions = (
-        "You are a helpful Discord bot that solves problems and answers questions. "
-        "When given OCR text, analyze it carefully. "
+        "You are a very very helpful Discord bot that solves problems and answers questions. "
+        "When given OCR text, analyze it carefully. And use it in your solution "
         "Respond in exactly two sections:\n"
         "Reason: (detailed step-by-step reasoning)\n"
         "Answer: (concise final answer)\n"
