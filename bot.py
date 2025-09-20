@@ -49,7 +49,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # GLOBAL VARIABLES
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 activated_channels = {}
-MAX_CONTEXT_MESSAGES = 10
+MAX_CONTEXT_MESSAGES = 5
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS
